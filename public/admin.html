@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Panel - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <h1>Admin Panel</h1>
+    <p class="sub">Add, edit and remove everything in the system.</p>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="dashboard">Dashboard</div>
+      <div class="tab" data-tab="movies">Movies</div>
+      <div class="tab" data-tab="cinemas">Cinemas &amp; Screens</div>
+      <div class="tab" data-tab="seats">Seats</div>
+      <div class="tab" data-tab="shows">Showtimes</div>
+      <div class="tab" data-tab="bookings">Bookings</div>
+      <div class="tab" data-tab="users">Users</div>
+      <div class="tab" data-tab="promos">Promo Codes</div>
+      <div class="tab" data-tab="media">Media</div>
+    </div>
+
+    <div id="panel"></div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/adminform.js"></script>
+  <script>
+    let tab = 'dashboard';
+
+    /* Small header shown above each list. */
+    const header = (title, buttonLabel, buttonId) => `
+      <div class="sp" style="margin-bottom:16px">
+        <h3 style="margin:0">${esc(title)}</h3>
+        ${buttonLabel ? `<button class="btn sm" id="${buttonId}">+ ${esc(buttonLabel)}</button>` : ''}
+      </div>`;
+
+    /* =========================================================
+       Dashboard
+       ========================================================= */
+
+    async function dashboard() {
+      const d = await api('/api/admin/stats');
+      const t = d.totals;
+      const stat = (k, v, note = '') =>
+        `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>
+         ${note ? `<div class="d">${note}</div>` : ''}</div>`;
+
+      const peak = Math.max(1, ...d.series.map((x) => x.revenue));
+      const chart = `
+        <div class="chart">${d.series.map((x) => `
+          <div class="bar ${x.revenue ? '' : 'zero'}"
+               style="height:${Math.max(3, Math.round((x.revenue / peak) * 100))}%"
+               title="${x.day}: ${x.bookings} booking(s), ${money(x.revenue)}"></div>`).join('')}</div>
+        <div class="chart-x">${d.series.map((x) => `<span>${x.day.slice(8)}</span>`).join('')}</div>`;
+
+      $('#panel').innerHTML = `
+        <div class="stat-grid">
+          ${stat('Revenue', money(t.revenue), `${money(t.revenue_today)} today`)}
+          ${stat('Bookings', t.bookings, `${t.bookings_today} today`)}
+          ${stat('Occupancy today', t.occupancy + '%', `${t.occupancy_seats} seats · ${t.shows_today} shows`)}
+          ${stat('Active shows', t.shows, `${t.seats_sold} seats sold all time`)}
+          ${stat('Movies', t.movies)}
+          ${stat('Cinemas', t.cinemas, `${t.screens} screens`)}
+          ${stat('Customers', t.users)}
+          ${stat('Refunded', money(t.refunded))}
+        </div>
+
+        <div class="card" style="margin-bottom:18px">
+          <div class="sp" style="margin-bottom:6px">
+            <h3 style="margin:0">Revenue, last 14 days</h3>
+            <span class="dim" style="font-size:12.5px">Hover a bar for the day's figures</span>
+          </div>
+          ${chart}
+        </div>
+
+        <div class="row" style="align-items:flex-start;margin-bottom:18px">
+          <div class="card" style="flex:1;min-width:290px">
+            <h3>Top movies</h3>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Movie</th><th class="right">Seats</th><th class="right">Revenue</th></tr></thead>
+              <tbody>${d.top_movies.map((m) => `
+                <tr><td>${esc(m.title)}</td><td class="right">${m.seats}</td>
+                    <td class="right">${money(m.revenue)}</td></tr>`).join('')
+                || '<tr><td colspan="3" class="muted">No sales yet</td></tr>'}</tbody>
+            </table></div>
+          </div>
+          <div class="card" style="flex:1;min-width:290px">
+            <h3>Recent bookings</h3>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Ref</th><th>Customer</th><th>Movie</th><th class="right">Total</th></tr></thead>
+              <tbody>${d.recent_bookings.map((b) => `
+                <tr><td><b style="color:var(--brand)">${esc(b.booking_ref)}</b></td>
+                    <td>${esc(b.user_name || '-')}</td><td>${esc(b.title || '-')}</td>
+                    <td class="right">${money(b.total_amount)}</td></tr>`).join('')
+                || '<tr><td colspan="4" class="muted">No bookings yet</td></tr>'}</tbody>
+            </table></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Next shows</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Start</th><th>Movie</th><th>Cinema / Screen</th><th>Sold</th><th>Fill</th></tr></thead>
+            <tbody>${d.upcoming_shows.map((s) => `
+              <tr>
+                <td class="nowrap">${fmtDateTime(s.start_time)}</td>
+                <td>${esc(s.title || '-')}</td>
+                <td class="muted">${esc(s.cinema || '')} · ${esc(s.screen || '')}</td>
+                <td class="nowrap">${s.sold}/${s.total}</td>
+                <td style="min-width:90px">
+                  <div class="meter"><i style="width:${s.fill}%"></i></div>
+                  <span class="dim" style="font-size:11.5px">${s.fill}%</span>
+                </td>
+              </tr>`).join('') || '<tr><td colspan="5" class="muted">No upcoming shows</td></tr>'}</tbody>
+          </table></div>
+        </div>`;
+    }
+
+    /* =========================================================
+       Movies
+       ========================================================= */
+
+    const MOVIE_FIELDS = [
+      { key: 'title', label: 'Title', required: true },
+      { key: 'poster_url', label: 'Poster', type: 'image' },
+      { key: 'banner_url', label: 'Wide banner (home page hero)', type: 'image' },
+      { key: 'director', label: 'Director', placeholder: 'Amara Silva' },
+      { key: 'cast_list', label: 'Cast', placeholder: 'Comma separated: actor one, actor two' },
+      { key: 'genre', label: 'Genre', placeholder: 'Action, Drama' },
+      { key: 'language', label: 'Language', placeholder: 'Urdu' },
+      { key: 'duration_min', label: 'Duration (minutes)', type: 'number', default: 120 },
+      { key: 'certificate', label: 'Certificate', type: 'select',
+        options: [['U', 'U - Everyone'], ['U/A', 'U/A - Parental guidance'], ['A', 'A - Adults only']], default: 'U/A' },
+      { key: 'release_date', label: 'Release date', type: 'date' },
+      { key: 'status', label: 'Status', type: 'select', default: 'now_showing',
+        options: [['now_showing', 'Now Showing'], ['coming_soon', 'Coming Soon'], ['archived', 'Archived']],
+        hint: 'Now Showing = on the site and bookable. Coming Soon = listed but not bookable. '
+            + 'Archived = hidden from the site completely.' },
+      { key: 'trailer_url', label: 'Trailer URL', placeholder: 'https://youtube.com/watch?v=...' },
+      { key: 'description', label: 'Description', type: 'textarea', rows: 4 },
+    ];
+
+    async function movies() {
+      const list = await api('/api/admin/movies').then((r) => r.movies);
+
+      $('#panel').innerHTML = header('Movies', 'Add Movie', 'addMovie') + `
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Poster</th><th>Title</th><th>Genre</th><th>Lang</th>
+                     <th>Runtime</th><th>Status</th><th class="right">Actions</th></tr></thead>
+          <tbody>${list.map((m) => `
+            <tr>
+              <td><div class="thumb-sm" style="${posterStyle(m.poster_url, m.title)}"></div></td>
+              <td>
+                <b>${esc(m.title)}</b>
+                <div class="muted" style="font-size:12px">${esc(m.certificate)}</div>
+                ${m.status === 'archived'
+                  ? '<div class="dim" style="font-size:11.5px;margin-top:3px">Hidden from the site</div>'
+                  : m.status === 'now_showing' && !m.upcoming_shows
+                    ? '<div style="font-size:11.5px;margin-top:3px;color:var(--warn)">No showtimes &mdash; not bookable yet</div>'
+                    : m.upcoming_shows
+                      ? `<div class="dim" style="font-size:11.5px;margin-top:3px">${m.upcoming_shows} upcoming show(s)</div>`
+                      : ''}
+              </td>
+              <td>${esc(m.genre)}</td><td>${esc(m.language)}</td><td>${runtime(m.duration_min)}</td>
+              <td><span class="badge ${m.status === 'now_showing' ? 'ok' : m.status === 'coming_soon' ? 'warn' : 'bad'}">
+                ${m.status.replace('_', ' ')}</span></td>
+              <td class="right" style="white-space:nowrap">
+                <button class="btn ghost sm" data-edit="${m.id}">Edit</button>
+                <button class="btn danger sm" data-del="${m.id}">Delete</button>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="7" class="muted">No movies yet</td></tr>'}</tbody>
+        </table></div></div>`;
+
+      $('#addMovie').addEventListener('click', () => openForm({
+        title: 'Add Movie', fields: MOVIE_FIELDS, saveLabel: 'Add Movie',
+        onSave: async (data) => {
+          await api('/api/admin/movies', { method: 'POST', body: data });
+          toast('Movie added', 'ok');
+          movies();
+        },
+      }));
+
+      $$('[data-edit]').forEach((b) => b.addEventListener('click', () => {
+        const movie = list.find((m) => m.id === Number(b.dataset.edit));
+        openForm({
+          title: 'Edit: ' + movie.title, fields: MOVIE_FIELDS, values: movie,
+          onSave: async (data) => {
+            await api('/api/admin/movies/' + movie.id, { method: 'PUT', body: data });
+            toast('Movie updated', 'ok');
+            movies();
+          },
+        });
+      }));
+
+      $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+        const movie = list.find((m) => m.id === Number(b.dataset.del));
+        if (!await confirmAction(`"${movie.title}" and all of its showtimes will be removed.`,
+                                 'Delete this movie?')) return;
+        try {
+          const r = await api('/api/admin/movies/' + movie.id, { method: 'DELETE' });
+          toast(r.removed_shows ? `Movie and ${r.removed_shows} showtime(s) deleted` : 'Movie deleted', 'ok');
+          movies();
+        } catch (e) {
+          // Deleting is refused once tickets are sold. Offer the alternative
+          // right here rather than leaving the admin at a dead end.
+          if (e.status === 409 && e.data?.can_archive) {
+            const yes = await confirmDialog({
+              title: 'Cannot delete this movie',
+              message: `${e.message}
+
+Archiving hides it from the site and stops new bookings, `
+                     + 'while keeping those tickets and the revenue reports intact.',
+              confirmLabel: 'Archive it instead',
+              danger: false,
+            });
+            if (!yes) return;
+            try {
+              await api('/api/admin/movies/' + movie.id, {
+                method: 'PUT', body: { ...movie, status: 'archived' },
+              });
+              toast(`"${movie.title}" archived`, 'ok');
+              movies();
+            } catch (err) { toast(err.message, 'err'); }
+            return;
+          }
+          toast(e.message, 'err');
+        }
+      }));
+    }
+
+    /* =========================================================
+       Cinemas & screens
+       ========================================================= */
+
+    const CINEMA_FIELDS = [
+      { key: 'name', label: 'Cinema name', required: true },
+      { key: 'city', label: 'City', required: true },
+      { key: 'address', label: 'Address' },
+    ];
+
+    const screenFields = (cinemaOptions, lockCinema) => [
+      { key: 'cinema_id', label: 'Cinema', type: 'select', options: cinemaOptions, ...(lockCinema ? { hint: 'A screen cannot be moved to another cinema.' } : {}) },
+      { key: 'name', label: 'Screen name', required: true, placeholder: 'Screen 1' },
+      { key: 'col_count', label: 'Seats per row', type: 'number', default: 12, hint: 'Maximum 30.' },
+      { type: 'group', label: 'Seat rows by tier (26 rows max in total)' },
+      { key: 'silver_rows', label: 'Silver rows', type: 'number', default: 4 },
+      { key: 'gold_rows', label: 'Gold rows', type: 'number', default: 3 },
+      { key: 'recliner_rows', label: 'Recliner rows', type: 'number', default: 1 },
+      { type: 'group', label: 'Price multipliers (ticket price = show base price x multiplier)' },
+      { key: 'silver_price', label: 'Silver', type: 'number', step: '0.1', default: 1 },
+      { key: 'gold_price', label: 'Gold', type: 'number', step: '0.1', default: 1.5 },
+      { key: 'recliner_price', label: 'Recliner', type: 'number', step: '0.1', default: 2.2 },
+    ];
+
+    async function cinemas() {
+      const list = await api('/api/admin/cinemas').then((r) => r.cinemas);
+      const options = list.map((c) => [c.id, `${c.name} - ${c.city}`]);
+
+      $('#panel').innerHTML = `
+        <div class="sp" style="margin-bottom:16px">
+          <h3 style="margin:0">Cinemas &amp; Screens</h3>
+          <div style="display:flex;gap:8px">
+            <button class="btn ghost sm" id="addScreen" ${list.length ? '' : 'disabled'}>+ Add Screen</button>
+            <button class="btn sm" id="addCinema">+ Add Cinema</button>
+          </div>
+        </div>
+
+        ${list.map((c) => `
+          <div class="card" style="margin-bottom:12px">
+            <div class="sp">
+              <div>
+                <b>${esc(c.name)}</b> <span class="badge">${esc(c.city)}</span>
+                <div class="muted" style="font-size:13px">${esc(c.address || 'No address set')}</div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn ghost sm" data-editc="${c.id}">Edit</button>
+                <button class="btn danger sm" data-delc="${c.id}">Delete</button>
+              </div>
+            </div>
+            <div class="table-wrap" style="margin-top:12px"><table>
+              <thead><tr><th>Screen</th><th>Layout</th><th>Silver</th><th>Gold</th><th>Recliner</th>
+                         <th>Total</th><th class="right">Actions</th></tr></thead>
+              <tbody>${c.screens.map((s) => `
+                <tr>
+                  <td><b>${esc(s.name)}</b>${s.in_use ? ' <span class="badge warn">has bookings</span>' : ''}</td>
+                  <td>${s.row_count} rows x ${s.col_count}</td>
+                  <td>${s.silver_seats}</td><td>${s.gold_seats}</td><td>${s.recliner_seats}</td>
+                  <td><b>${s.seat_count}</b></td>
+                  <td class="right" style="white-space:nowrap">
+                    <button class="btn ghost sm" data-edits="${s.id}">Edit</button>
+                    <button class="btn danger sm" data-dels="${s.id}">Delete</button>
+                  </td>
+                </tr>`).join('') || '<tr><td colspan="7" class="muted">No screens yet</td></tr>'}</tbody>
+            </table></div>
+          </div>`).join('') || '<div class="empty">No cinemas yet. Add one to get started.</div>'}`;
+
+      $('#addCinema').addEventListener('click', () => openForm({
+        title: 'Add Cinema', fields: CINEMA_FIELDS, saveLabel: 'Add Cinema',
+        onSave: async (data) => {
+          await api('/api/admin/cinemas', { method: 'POST', body: data });
+          toast('Cinema added', 'ok');
+          cinemas();
+        },
+      }));
+
+      $$('[data-editc]').forEach((b) => b.addEventListener('click', () => {
+        const cinema = list.find((c) => c.id === Number(b.dataset.editc));
+        openForm({
+          title: 'Edit: ' + cinema.name, fields: CINEMA_FIELDS, values: cinema,
+          onSave: async (data) => {
+            await api('/api/admin/cinemas/' + cinema.id, { method: 'PUT', body: data });
+            toast('Cinema updated', 'ok');
+            cinemas();
+          },
+        });
+      }));
+
+      $$('[data-delc]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Delete this cinema with all its screens, seats and shows?')) return;
+        await api('/api/admin/cinemas/' + b.dataset.delc, { method: 'DELETE' });
+        toast('Cinema deleted', 'ok');
+        cinemas();
+      }));
+
+      $('#addScreen').addEventListener('click', () => openForm({
+        title: 'Add Screen', fields: screenFields(options), saveLabel: 'Create Screen &amp; Seats',
+        onSave: async (data) => {
+          await api('/api/admin/screens', { method: 'POST', body: data });
+          toast('Screen and its seats created', 'ok');
+          cinemas();
+        },
+      }));
+
+      $$('[data-edits]').forEach((b) => b.addEventListener('click', () => {
+        const id = Number(b.dataset.edits);
+        const cinema = list.find((c) => c.screens.some((s) => s.id === id));
+        const screen = cinema.screens.find((s) => s.id === id);
+        openForm({
+          title: 'Edit: ' + screen.name,
+          fields: screenFields(options, true),
+          values: {
+            cinema_id: cinema.id, name: screen.name, col_count: screen.col_count,
+            silver_rows: Math.round(screen.silver_seats / screen.col_count),
+            gold_rows: Math.round(screen.gold_seats / screen.col_count),
+            recliner_rows: Math.round(screen.recliner_seats / screen.col_count),
+            silver_price: 1, gold_price: 1.5, recliner_price: 2.2,
+          },
+          onSave: async (data) => {
+            try {
+              await api('/api/admin/screens/' + id, { method: 'PUT', body: data });
+              toast('Screen updated', 'ok');
+            } catch (e) {
+              // 409 means the name was saved but the layout was kept, which is worth showing.
+              toast(e.message, 'err');
+            }
+            cinemas();
+          },
+        });
+      }));
+
+      $$('[data-dels]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Delete this screen and all its seats and shows?')) return;
+        await api('/api/admin/screens/' + b.dataset.dels, { method: 'DELETE' });
+        toast('Screen deleted', 'ok');
+        cinemas();
+      }));
+    }
+
+    /* =========================================================
+       Seats - take individual seats in or out of service
+       ========================================================= */
+
+    async function seats() {
+      const cinemas = await api('/api/admin/cinemas').then((r) => r.cinemas);
+      const screens = cinemas.flatMap((c) => c.screens.map((sc) => ({ ...sc, cinema: c.name, city: c.city })));
+
+      if (!screens.length) {
+        $('#panel').innerHTML = `<div class="empty"><div class="icon">&#128677;</div>
+          <h3>No screens yet</h3>
+          <p class="muted">Add a cinema and a screen first, then come back to manage its seats.</p></div>`;
+        return;
+      }
+
+      const chosen = window.__seatScreen || screens[0].id;
+      window.__seatScreen = chosen;
+
+      $('#panel').innerHTML = `
+        <div class="filters">
+          <select id="screenPick" style="max-width:340px">
+            ${screens.map((sc) => `<option value="${sc.id}" ${Number(sc.id) === Number(chosen) ? 'selected' : ''}>
+              ${esc(sc.cinema)} — ${esc(sc.name)} (${sc.seat_count} seats)</option>`).join('')}
+          </select>
+        </div>
+        <div id="seatPanel">${skeletonRows(5)}</div>`;
+
+      $('#screenPick').addEventListener('change', (e) => { window.__seatScreen = e.target.value; seats(); });
+      await loadSeatGrid(chosen);
+    }
+
+    async function loadSeatGrid(screenId) {
+      const data = await api(`/api/admin/screens/${screenId}/seats`);
+      const picked = new Set();
+
+      $('#seatPanel').innerHTML = `
+        <div class="card">
+          <div class="sp" style="margin-bottom:14px">
+            <div>
+              <h3 style="margin:0 0 3px">${esc(data.screen.name)}</h3>
+              <span class="muted" style="font-size:13px">
+                ${data.total} seats · <b style="color:var(--warn)">${data.disabled}</b> out of service</span>
+            </div>
+            <span class="dim" style="font-size:12.5px">Click seats to select, then apply below</span>
+          </div>
+
+          <div class="screen-bar"></div>
+          <div class="screen-label">Screen this way</div>
+
+          <div class="seat-map">
+            <div class="seat-grid">${data.rows.map((row) => `
+              <div class="seat-row">
+                <span class="rl">${row.row_label}</span>
+                ${row.seats.map((s) => `
+                  <button class="seat ${s.disabled ? 'out' : s.seat_type}" data-id="${s.id}"
+                          title="${esc(s.label)} · ${esc(s.seat_type)} · ${s.disabled ? 'out of service' : 'in service'}">
+                    ${s.seat_no}</button>`).join('')}
+                <span class="rl">${row.row_label}</span>
+              </div>`).join('')}</div>
+          </div>
+
+          <div class="legend">
+            <span><i style="background:var(--card-2)"></i>In service</span>
+            <span><i style="background:repeating-linear-gradient(45deg,#1a1c26,#1a1c26 3px,#23262f 3px,#23262f 6px)"></i>Out of service</span>
+            <span><i style="background:var(--ok);border-color:var(--ok)"></i>Selected</span>
+          </div>
+        </div>
+
+        <div class="summary-bar">
+          <div class="grow">
+            <div class="dim" style="font-size:12.5px">Selected</div>
+            <div id="seatPicked"><b>None</b></div>
+          </div>
+          <button class="btn ghost" id="disableBtn" disabled>Mark out of service</button>
+          <button class="btn" id="enableBtn" disabled>Put back in service</button>
+        </div>`;
+
+      const paint = () => {
+        $('#seatPicked').innerHTML = picked.size ? `<b>${picked.size} seat(s)</b>` : '<b>None</b>';
+        $('#disableBtn').disabled = $('#enableBtn').disabled = picked.size === 0;
+      };
+
+      $$('#seatPanel .seat').forEach((btn) => btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.id);
+        if (picked.has(id)) { picked.delete(id); btn.classList.remove('selected'); }
+        else { picked.add(id); btn.classList.add('selected'); }
+        paint();
+      }));
+
+      const apply = (disabled) => async (e) => {
+        const label = disabled ? 'take these seats out of service' : 'put these seats back in service';
+        if (!await confirmAction(`This will ${label}. Seats already sold for a show keep their bookings.`,
+                                 disabled ? 'Mark out of service?' : 'Put back in service?')) return;
+        await withBusy(e.target, 'Saving', async () => {
+          try {
+            await api('/api/admin/seats/disable', {
+              method: 'PATCH', body: { seat_ids: [...picked], disabled },
+            });
+            toast(`${picked.size} seat(s) updated`, 'ok');
+            await loadSeatGrid(screenId);
+          } catch (err) { toast(err.message, 'err'); }
+        });
+      };
+
+      $('#disableBtn').addEventListener('click', apply(true));
+      $('#enableBtn').addEventListener('click', apply(false));
+    }
+
+    /* =========================================================
+       Showtimes
+       ========================================================= */
+
+    async function shows() {
+      const [{ shows: list }, { movies: movieList }, { cinemas: cinemaList }] = await Promise.all([
+        api('/api/admin/shows'), api('/api/admin/movies'), api('/api/admin/cinemas'),
+      ]);
+      const screens = cinemaList.flatMap((c) => c.screens.map((s) => ({ ...s, cinema: c.name })));
+
+      const fields = [
+        { key: 'movie_id', label: 'Movie', type: 'select', options: movieList.map((m) => [m.id, `${m.title} (${m.duration_min} min)`]) },
+        { key: 'screen_id', label: 'Screen', type: 'select', options: screens.map((s) => [s.id, `${s.cinema} - ${s.name} (${s.seat_count} seats)`]) },
+        { key: 'start_time', label: 'Start time', type: 'datetime-local', required: true },
+        { key: 'base_price', label: 'Base price (Rs)', type: 'number', default: 500,
+          hint: 'Gold seats cost 1.5x this and Recliner 2.2x, unless the screen sets its own multipliers.' },
+        { key: 'status', label: 'Status', type: 'select', options: [['active', 'Active'], ['cancelled', 'Cancelled']] },
+      ];
+
+      $('#panel').innerHTML = header('Showtimes', 'Schedule Show', 'addShow') + `
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Movie</th><th>Cinema / Screen</th><th>Start</th><th>Price</th>
+                     <th>Occupancy</th><th>Status</th><th class="right">Actions</th></tr></thead>
+          <tbody>${list.slice(0, 150).map((s) => {
+            const pct = s.total_seats ? Math.round((s.taken_seats / s.total_seats) * 100) : 0;
+            return `<tr>
+              <td>${esc(s.title)}</td>
+              <td class="muted">${esc(s.cinema)} - ${esc(s.screen)}</td>
+              <td>${fmtDateTime(s.start_time)}</td>
+              <td>${money(s.base_price)}</td>
+              <td>${s.taken_seats}/${s.total_seats} <span class="muted">(${pct}%)</span></td>
+              <td><span class="badge ${s.status === 'active' ? 'ok' : 'bad'}">${s.status}</span></td>
+              <td class="right" style="white-space:nowrap">
+                <button class="btn ghost sm" data-edit="${s.id}">Edit</button>
+                <button class="btn danger sm" data-del="${s.id}">Remove</button>
+              </td>
+            </tr>`; }).join('') || '<tr><td colspan="7" class="muted">No shows scheduled</td></tr>'}</tbody>
+        </table></div>
+        <p class="muted" style="font-size:12.5px">Showing the 150 most recent shows.</p></div>`;
+
+      $('#addShow').addEventListener('click', () => openForm({
+        title: 'Schedule a Show', fields, saveLabel: 'Add Show',
+        onSave: async (data) => {
+          await api('/api/admin/shows', { method: 'POST', body: data });
+          toast('Show scheduled', 'ok');
+          shows();
+        },
+      }));
+
+      $$('[data-edit]').forEach((b) => b.addEventListener('click', () => {
+        const show = list.find((s) => s.id === Number(b.dataset.edit));
+        openForm({
+          title: `Edit show: ${show.title}`, fields,
+          values: { ...show, start_time: show.start_time.replace(' ', 'T') },
+          onSave: async (data) => {
+            await api('/api/admin/shows/' + show.id, { method: 'PUT', body: data });
+            toast('Show updated', 'ok');
+            shows();
+          },
+        });
+      }));
+
+      $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Remove this show?')) return;
+        const r = await api('/api/admin/shows/' + b.dataset.del, { method: 'DELETE' });
+        toast(r.note || 'Show removed', 'ok');
+        shows();
+      }));
+    }
+
+    /* =========================================================
+       Bookings
+       ========================================================= */
+
+    async function bookings() {
+      const status = window.__bStatus || '';
+      const search = window.__bSearch || '';
+      const list = await api(`/api/admin/bookings?status=${status}&search=${encodeURIComponent(search)}`)
+        .then((r) => r.bookings);
+
+      $('#panel').innerHTML = `
+        <div class="filters">
+          <input class="grow" id="bSearch" type="search" autocomplete="off"
+                 placeholder="Search reference, customer, movie or seat..." value="${esc(search)}">
+          ${search ? `<button class="btn ghost" id="bClear">Clear search</button>` : ''}
+          <select id="bStatus">
+            ${['', 'CONFIRMED', 'PENDING', 'CANCELLED', 'EXPIRED'].map((s) =>
+              `<option value="${s}" ${s === status ? 'selected' : ''}>${s || 'All statuses'}</option>`).join('')}
+          </select>
+        </div>
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Ref</th><th>Customer</th><th>Movie</th><th>Show</th><th>Seats</th>
+                     <th class="right">Total</th><th>Pay</th><th>Status</th><th class="right">Action</th></tr></thead>
+          <tbody>${list.map((b) => `
+            <tr>
+              <td><b style="color:var(--brand)">${esc(b.booking_ref)}</b></td>
+              <td>${esc(b.user_name)}<div class="muted" style="font-size:12px">${esc(b.email)}</div></td>
+              <td>${esc(b.title)}</td>
+              <td class="muted">${fmtDateTime(b.start_time)}<div style="font-size:12px">${esc(b.cinema)} - ${esc(b.screen)}</div></td>
+              <td>${esc(b.seats_snapshot || '-')}</td>
+              <td class="right">${money(b.total_amount)}</td>
+              <td class="muted">${esc(b.payment_method || '-')}</td>
+              <td><span class="badge ${b.status === 'CONFIRMED' ? 'ok' : b.status === 'PENDING' ? 'warn' : 'bad'}">${b.status}</span></td>
+              <td class="right">${['CONFIRMED', 'PENDING'].includes(b.status)
+                ? `<button class="btn danger sm" data-cancel="${b.id}">Cancel</button>` : ''}</td>
+            </tr>`).join('') || '<tr><td colspan="9" class="muted">No bookings</td></tr>'}</tbody>
+        </table></div></div>`;
+
+      $('#bStatus').addEventListener('change', (e) => { window.__bStatus = e.target.value; bookings(); });
+
+      $('#bClear')?.addEventListener('click', () => { window.__bSearch = ''; bookings(); });
+
+      const searchBox = $('#bSearch');
+      searchBox.addEventListener('input', () => {
+        clearTimeout(window.__bTimer);
+        window.__bTimer = setTimeout(() => { window.__bSearch = searchBox.value.trim(); bookings(); }, 300);
+      });
+      if (search) { searchBox.focus(); searchBox.setSelectionRange(search.length, search.length); }
+      $$('[data-cancel]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Cancel this booking and refund it?')) return;
+        await api(`/api/admin/bookings/${b.dataset.cancel}/cancel`, { method: 'POST' });
+        toast('Booking cancelled', 'ok');
+        bookings();
+      }));
+    }
+
+    /* =========================================================
+       Users
+       ========================================================= */
+
+    async function users() {
+      const search = window.__uSearch || '';
+      const list = await api('/api/admin/users?search=' + encodeURIComponent(search)).then((r) => r.users);
+
+      const total = search ? (await api('/api/admin/users')).users.length : list.length;
+
+      $('#panel').innerHTML = header('Users', 'Add User', 'addUser') + `
+        ${search ? `<div class="alert warn">Showing ${list.length} of ${total} users, filtered by
+          "<b>${esc(search)}</b>". Clear the search to see everyone.</div>` : ''}
+        <div class="filters">
+          <input class="grow" id="uSearch" type="search" autocomplete="off"
+                 placeholder="Search name, email or phone..." value="${esc(search)}">
+          ${search ? `<button class="btn ghost" id="uClear">Clear search</button>` : ''}
+        </div>`  + `
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Phone</th><th>Role</th>
+                     <th class="right">Bookings</th><th class="right">Spent</th><th>Status</th>
+                     <th class="right">Actions</th></tr></thead>
+          <tbody>${list.map((u) => `
+            <tr>
+              <td>${u.id}</td><td><b>${esc(u.name)}</b></td><td>${esc(u.email)}</td>
+              <td>${esc(u.phone || '-')}</td>
+              <td><span class="badge ${u.role === 'admin' ? 'gold' : ''}">${u.role}</span></td>
+              <td class="right">${u.bookings}</td><td class="right">${money(u.spent)}</td>
+              <td><span class="badge ${u.blocked ? 'bad' : 'ok'}">${u.blocked ? 'Blocked' : 'Active'}</span></td>
+              <td class="right" style="white-space:nowrap">
+                <button class="btn ghost sm" data-history="${u.id}">History</button>
+                <button class="btn ghost sm" data-edit="${u.id}">Edit</button>
+                <button class="btn ghost sm" data-block="${u.id}" data-val="${u.blocked ? 0 : 1}">
+                  ${u.blocked ? 'Unblock' : 'Block'}</button>
+                <button class="btn danger sm" data-del="${u.id}">Delete</button>
+              </td>
+            </tr>`).join('')}</tbody>
+        </table></div></div>`;
+
+      $('#uClear')?.addEventListener('click', () => { window.__uSearch = ''; users(); });
+
+      const uBox = $('#uSearch');
+      uBox.addEventListener('input', () => {
+        clearTimeout(window.__uTimer);
+        window.__uTimer = setTimeout(() => { window.__uSearch = uBox.value.trim(); users(); }, 300);
+      });
+      if (search) { uBox.focus(); uBox.setSelectionRange(search.length, search.length); }
+
+      $$('[data-history]').forEach((b) => b.addEventListener('click', async () => {
+        const r = await api(`/api/admin/users/${b.dataset.history}/bookings`);
+        const back = document.createElement('div');
+        back.className = 'modal-backdrop';
+        back.innerHTML = `
+          <div class="modal">
+            <div class="modal-head">
+              <h3>${esc(r.user.name)} · booking history</h3>
+              <button class="x-close" data-close>&times;</button>
+            </div>
+            <div class="modal-body">
+              <p class="muted" style="margin-top:0">${esc(r.user.email)}${r.user.phone ? ' · ' + esc(r.user.phone) : ''}</p>
+              ${r.bookings.length ? `<div class="table-wrap"><table>
+                <thead><tr><th>Ref</th><th>Movie</th><th>Show</th><th>Seats</th>
+                           <th class="right">Total</th><th>Status</th></tr></thead>
+                <tbody>${r.bookings.map((b2) => `
+                  <tr><td><b style="color:var(--brand)">${esc(b2.booking_ref)}</b></td>
+                      <td>${esc(b2.title || '-')}</td>
+                      <td class="muted nowrap">${b2.start_time ? fmtDateTime(b2.start_time) : '-'}</td>
+                      <td>${esc(b2.seats_snapshot || '-')}</td>
+                      <td class="right">${money(b2.total_amount)}</td>
+                      <td><span class="badge ${b2.status === 'CONFIRMED' ? 'ok' : b2.status === 'PENDING' ? 'warn' : 'bad'}">${b2.status}</span></td>
+                  </tr>`).join('')}</tbody>
+              </table></div>` : '<div class="empty">This user has no bookings yet.</div>'}
+            </div>
+            <div class="modal-foot"><button class="btn ghost" data-close>Close</button></div>
+          </div>`;
+        document.body.appendChild(back);
+        const close = () => back.remove();
+        back.addEventListener('click', (e) => { if (e.target === back) close(); });
+        $$('[data-close]', back).forEach((x) => x.addEventListener('click', close));
+      }));
+
+      $('#addUser').addEventListener('click', () => openForm({
+        title: 'Add User', saveLabel: 'Create User',
+        fields: [
+          { key: 'name', label: 'Full name', required: true },
+          { key: 'email', label: 'Email', type: 'email', required: true },
+          { key: 'phone', label: 'Phone' },
+          { key: 'password', label: 'Password', type: 'password', required: true, hint: 'At least 6 characters.' },
+          { key: 'role', label: 'Role', type: 'select', options: [['user', 'Customer'], ['admin', 'Admin']] },
+        ],
+        onSave: async (data) => {
+          await api('/api/admin/users', { method: 'POST', body: data });
+          toast(`${data.name} added`, 'ok');
+          // Drop any search filter, otherwise the new row may be hidden by it.
+          window.__uSearch = '';
+          users();
+        },
+      }));
+
+      $$('[data-edit]').forEach((b) => b.addEventListener('click', () => {
+        const user = list.find((u) => u.id === Number(b.dataset.edit));
+        openForm({
+          title: 'Edit: ' + user.name,
+          values: user,
+          fields: [
+            { key: 'name', label: 'Full name', required: true },
+            { key: 'phone', label: 'Phone' },
+            { key: 'role', label: 'Role', type: 'select', options: [['user', 'Customer'], ['admin', 'Admin']] },
+            { key: 'password', label: 'New password', type: 'password', hint: 'Leave blank to keep the current password.' },
+          ],
+          onSave: async (data) => {
+            await api('/api/admin/users/' + user.id, { method: 'PUT', body: data });
+            toast('User updated', 'ok');
+            users();
+          },
+        });
+      }));
+
+      $$('[data-block]').forEach((b) => b.addEventListener('click', async () => {
+        try {
+          await api(`/api/admin/users/${b.dataset.block}/block`, {
+            method: 'PATCH', body: { blocked: b.dataset.val === '1' } });
+          users();
+        } catch (e) { toast(e.message, 'err'); }
+      }));
+
+      $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Delete this user permanently?')) return;
+        try {
+          await api('/api/admin/users/' + b.dataset.del, { method: 'DELETE' });
+          toast('User deleted', 'ok');
+          users();
+        } catch (e) { toast(e.message, 'err'); }
+      }));
+    }
+
+    /* =========================================================
+       Promo codes
+       ========================================================= */
+
+    const PROMO_FIELDS = [
+      { key: 'code', label: 'Code', required: true, placeholder: 'EIDSALE' },
+      { key: 'discount_type', label: 'Discount type', type: 'select',
+        options: [['percent', 'Percent (%)'], ['flat', 'Flat amount (Rs)']] },
+      { key: 'discount_value', label: 'Discount value', type: 'number', default: 10 },
+      { key: 'max_discount', label: 'Maximum discount (Rs)', type: 'number', hint: 'Leave blank for no cap. Only meaningful for percent discounts.' },
+      { key: 'min_amount', label: 'Minimum booking (Rs)', type: 'number', default: 0 },
+      { key: 'expires_at', label: 'Expires on', type: 'date', hint: 'Leave blank for no expiry.' },
+      { key: 'active', label: 'Active', type: 'checkbox', checkboxLabel: 'Customers can use this code', default: true },
+    ];
+
+    async function promos() {
+      const list = await api('/api/admin/promos').then((r) => r.promos);
+
+      $('#panel').innerHTML = header('Promo Codes', 'Create Promo', 'addPromo') + `
+        <div class="card"><div class="table-wrap"><table>
+          <thead><tr><th>Code</th><th>Discount</th><th>Max</th><th>Min Booking</th>
+                     <th>Expires</th><th>Status</th><th class="right">Actions</th></tr></thead>
+          <tbody>${list.map((p) => `
+            <tr>
+              <td><b style="color:var(--brand)">${esc(p.code)}</b></td>
+              <td>${p.discount_type === 'percent' ? p.discount_value + '%' : money(p.discount_value)}</td>
+              <td>${p.max_discount ? money(p.max_discount) : '-'}</td>
+              <td>${money(p.min_amount)}</td>
+              <td>${esc(p.expires_at || 'never')}</td>
+              <td><span class="badge ${p.active ? 'ok' : 'bad'}">${p.active ? 'Active' : 'Off'}</span></td>
+              <td class="right" style="white-space:nowrap">
+                <button class="btn ghost sm" data-edit="${p.id}">Edit</button>
+                <button class="btn ghost sm" data-toggle="${p.id}" data-val="${p.active ? 0 : 1}">
+                  ${p.active ? 'Disable' : 'Enable'}</button>
+                <button class="btn danger sm" data-del="${p.id}">Delete</button>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="7" class="muted">No promo codes yet</td></tr>'}</tbody>
+        </table></div></div>`;
+
+      $('#addPromo').addEventListener('click', () => openForm({
+        title: 'Create Promo Code', fields: PROMO_FIELDS, saveLabel: 'Create',
+        onSave: async (data) => {
+          await api('/api/admin/promos', { method: 'POST', body: data });
+          toast('Promo created', 'ok');
+          promos();
+        },
+      }));
+
+      $$('[data-edit]').forEach((b) => b.addEventListener('click', () => {
+        const promo = list.find((p) => p.id === Number(b.dataset.edit));
+        openForm({
+          title: 'Edit: ' + promo.code, fields: PROMO_FIELDS, values: promo,
+          onSave: async (data) => {
+            await api('/api/admin/promos/' + promo.id, { method: 'PUT', body: data });
+            toast('Promo updated', 'ok');
+            promos();
+          },
+        });
+      }));
+
+      $$('[data-toggle]').forEach((b) => b.addEventListener('click', async () => {
+        await api('/api/admin/promos/' + b.dataset.toggle, {
+          method: 'PATCH', body: { active: b.dataset.val === '1' } });
+        promos();
+      }));
+
+      $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Delete this promo code?')) return;
+        await api('/api/admin/promos/' + b.dataset.del, { method: 'DELETE' });
+        toast('Promo deleted', 'ok');
+        promos();
+      }));
+    }
+
+    /* =========================================================
+       Media library
+       ========================================================= */
+
+    async function media() {
+      const files = await api('/api/admin/uploads').then((r) => r.files);
+      const kb = (n) => (n / 1024).toFixed(0) + ' KB';
+
+      $('#panel').innerHTML = `
+        <div class="card" style="margin-bottom:20px">
+          <h3>Upload Images</h3>
+          <p class="muted" style="font-size:13px;margin-top:-4px">
+            PNG, JPG, WEBP or GIF, up to 5 MB each. Uploaded images can be picked as movie posters,
+            or you can copy an image's URL and paste it anywhere.</p>
+          <input type="file" id="mediaFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+        </div>
+
+        ${files.length ? `<div class="media-grid">${files.map((f) => `
+          <div class="media-item">
+            <div class="thumb" style="background-image:url('${esc(f.url)}')"></div>
+            <div class="meta">
+              ${kb(f.size)}
+              <div class="acts">
+                <button class="btn ghost sm" data-copy="${esc(f.url)}">Copy URL</button>
+                <button class="btn danger sm" data-del="${esc(f.name)}">Delete</button>
+              </div>
+            </div>
+          </div>`).join('')}</div>`
+        : '<div class="empty">No images uploaded yet.</div>'}`;
+
+      $('#mediaFile').addEventListener('change', async (e) => {
+        const picked = [...e.target.files];
+        if (!picked.length) return;
+        let done = 0;
+        for (const file of picked) {
+          try {
+            const dataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => reject(new Error('Could not read ' + file.name));
+              reader.readAsDataURL(file);
+            });
+            await api('/api/admin/uploads', { method: 'POST', body: { data: dataUrl } });
+            done++;
+          } catch (err) { toast(`${file.name}: ${err.message}`, 'err'); }
+        }
+        if (done) toast(`${done} image${done > 1 ? 's' : ''} uploaded`, 'ok');
+        media();
+      });
+
+      $$('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+        const url = location.origin + b.dataset.copy;
+        try { await navigator.clipboard.writeText(url); toast('URL copied', 'ok'); }
+        catch { prompt('Copy this URL:', url); }
+      }));
+
+      $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+        if (!await confirmAction('Delete this image? Anything using it will lose its picture.')) return;
+        await api('/api/admin/uploads/' + b.dataset.del, { method: 'DELETE' });
+        toast('Image deleted', 'ok');
+        media();
+      }));
+    }
+
+    /* =========================================================
+       Router
+       ========================================================= */
+
+    const VIEWS = { dashboard, movies, cinemas, seats, shows, bookings, users, promos, media };
+
+    async function render() {
+      $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
+      $('#panel').innerHTML = skeletonRows(5);
+      try { await VIEWS[tab](); }
+      catch (e) { $('#panel').innerHTML = `<div class="alert err">${esc(e.message)}</div>`; }
+    }
+
+    (async () => {
+      const user = await renderNav('admin.html');
+      renderFooter();
+      await loadSettings();
+      if (!user) { location.href = 'login.html?next=/admin.html'; return; }
+      if (user.role !== 'admin') {
+        $('#panel').innerHTML = `<div class="empty"><div class="icon">&#128274;</div>
+          <h3>Admin access only</h3><p class="muted">This area is limited to staff accounts.</p>
+          <a class="btn ghost" href="index.html">Back to the site</a></div>`;
+        $('.tabs').classList.add('hidden');
+        return;
+      }
+      $$('.tab').forEach((t) => t.addEventListener('click', () => { tab = t.dataset.tab; render(); }));
+      render();
+
+      /* Which collections each tab cares about, so only relevant changes redraw it. */
+      const WATCHES = {
+        dashboard: ['bookings', 'users', 'movies', 'shows', 'cinemas'],
+        movies: ['movies', 'shows'],
+        cinemas: ['cinemas', 'screens'],
+        seats: ['screens'],
+        shows: ['shows', 'movies', 'cinemas', 'screens'],
+        bookings: ['bookings'],
+        users: ['users', 'bookings'],
+        promos: ['promos'],
+        media: [],
+      };
+
+      subscribeLive(Object.values(WATCHES).flat(), (collection) => {
+        if (!(WATCHES[tab] || []).includes(collection)) return;
+        render();
+      });
+    })();
+  </script>
+</body>
+</html>

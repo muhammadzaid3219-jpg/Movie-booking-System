@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Select Seats - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <div id="steps"></div>
+    <div id="head"></div>
+
+    <div class="card" style="margin-top:18px" id="mapCard">
+      <div class="screen-bar"></div>
+      <div class="screen-label">Screen this way</div>
+      <div class="seat-map" id="map"></div>
+      <div class="legend">
+        <span><i style="background:var(--card-2)"></i>Available</span>
+        <span><i style="background:var(--ok);border-color:var(--ok)"></i>Selected</span>
+        <span><i style="background:#242731;border-color:#2a2d38"></i>Booked</span>
+        <span><i style="background:repeating-linear-gradient(45deg,#1a1c26,#1a1c26 3px,#23262f 3px,#23262f 6px)"></i>Out of service</span>
+        <span><i style="border-color:rgba(232,182,76,.6)"></i>Gold</span>
+        <span><i style="border-color:rgba(91,143,214,.7)"></i>Recliner</span>
+      </div>
+    </div>
+
+    <div class="summary-bar" id="bar">
+      <div class="grow">
+        <div class="dim" style="font-size:12.5px">Selected seats</div>
+        <div id="pickList"><b>None yet</b></div>
+      </div>
+      <div>
+        <div class="dim" style="font-size:12.5px">Tickets</div>
+        <div style="font-size:19px;font-weight:700" id="pickTotal">—</div>
+      </div>
+      <button class="btn lg" id="proceed" disabled>Continue</button>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    const showId = qs('show');
+    const selected = new Map();
+    let show, maxSeats = 10;
+
+    function paint() {
+      const seats = [...selected.values()];
+      const total = seats.reduce((sum, s) => sum + s.price, 0);
+      $('#pickList').innerHTML = seats.length
+        ? `<b>${seats.map((s) => s.label).join(', ')}</b>
+           <span class="muted">(${seats.length} seat${seats.length > 1 ? 's' : ''})</span>`
+        : '<b>None yet</b>';
+      $('#pickTotal').textContent = seats.length ? money(total) : '—';
+      $('#proceed').disabled = seats.length === 0;
+    }
+
+    async function loadShow() {
+      $('#map').innerHTML = skeletonRows(6);
+
+      const data = await api('/api/shows/' + showId);
+      show = data.show;
+      maxSeats = data.pricing?.max_seats || 10;
+
+      $('#head').innerHTML = `
+        <a href="movie.html?id=${show.movie_id}" class="muted">&larr; Back to showtimes</a>
+        <h1 style="margin-top:10px">${esc(show.title)}</h1>
+        <p class="sub" style="margin-bottom:0">
+          ${esc(show.cinema)} · ${esc(show.screen)} · ${esc(show.city)}
+          &nbsp;|&nbsp; ${fmtDateTime(show.start_time)}
+          &nbsp;|&nbsp; <b style="color:var(--ok)">${data.seats_left} seats available</b>
+          &nbsp;|&nbsp; Held for ${data.pricing?.hold_minutes || 8} minutes once you continue
+        </p>`;
+
+      const widest = Math.max(...data.rows.map((r) => r.seats.length));
+      $('#map').innerHTML = `<div class="seat-grid">${data.rows.map((row) => `
+        <div class="seat-row">
+          <span class="rl">${row.row_label}</span>
+          ${row.seats.map((s, i) => {
+            const aisle = widest > 8 && i === Math.floor(widest / 2) ? '<span class="seat-gap"></span>' : '';
+            const state = s.disabled ? 'out' : s.booked ? 'booked' : s.seat_type;
+            const title = s.disabled ? `${s.label} — out of service`
+              : s.booked ? `${s.label} — already booked`
+              : `${s.label} — ${s.seat_type.toLowerCase()} — ${money(s.price)}`;
+            return `${aisle}<button class="seat ${state}" data-id="${s.id}"
+                      ${s.booked || s.disabled ? 'disabled' : ''}
+                      aria-label="${esc(title)}" title="${esc(title)}">${s.seat_no}</button>`;
+          }).join('')}
+          <span class="rl">${row.row_label}</span>
+        </div>`).join('')}</div>`;
+
+      const byId = new Map(data.rows.flatMap((r) => r.seats).map((s) => [s.id, s]));
+      $$('.seat:not([disabled])').forEach((btn) => btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.id);
+        if (selected.has(id)) {
+          selected.delete(id);
+          btn.classList.remove('selected');
+        } else if (selected.size >= maxSeats) {
+          toast(`You can book at most ${maxSeats} seats at a time`, 'err');
+          return;
+        } else {
+          selected.set(id, byId.get(id));
+          btn.classList.add('selected');
+        }
+        paint();
+      }));
+
+      paint();
+    }
+
+    $('#proceed').addEventListener('click', (e) => {
+      if (!requireLogin()) return;
+      withBusy(e.target, 'Holding seats', async () => {
+        try {
+          const data = await api('/api/bookings/hold', {
+            method: 'POST',
+            body: { show_id: Number(showId), seat_ids: [...selected.keys()] },
+          });
+          location.href = 'checkout.html?booking=' + data.booking.id;
+        } catch (err) {
+          toast(err.message, 'err');
+          if (err.status === 409) setTimeout(() => location.reload(), 1700);
+        }
+      });
+    });
+
+    (async () => {
+      $('#steps').innerHTML = stepsBar(3);
+      await renderNav('movies.html');
+      renderFooter();
+      await loadSettings();
+
+      if (!showId) { location.href = 'movies.html'; return; }
+      try {
+        await loadShow();
+
+        /*
+         * If someone else books while this map is open, grey their seats out
+         * straight away. Anything already selected here stays selected.
+         */
+        subscribeLive(['bookings'], async () => {
+          const fresh = await api('/api/shows/' + showId);
+          const taken = new Set(fresh.rows.flatMap((r) => r.seats).filter((s) => s.booked).map((s) => s.id));
+          let lost = 0;
+          for (const btn of $$('.seat')) {
+            const id = Number(btn.dataset.id);
+            if (!taken.has(id) || btn.classList.contains('out')) continue;
+            if (selected.has(id)) { selected.delete(id); lost++; }
+            btn.classList.remove('selected');
+            btn.classList.add('booked');
+            btn.disabled = true;
+          }
+          if (lost) toast(`${lost} of your selected seats was just taken by someone else`, 'err');
+          paint();
+        });
+      } catch (e) {
+        $('#head').innerHTML = `<div class="empty"><div class="icon">&#128533;</div>
+          <h3>${esc(e.message)}</h3><a class="btn ghost" href="movies.html">Back to movies</a></div>`;
+        $('#mapCard').classList.add('hidden');
+        $('#bar').classList.add('hidden');
+      }
+    })();
+  </script>
+</body>
+</html>

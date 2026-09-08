@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cineplex - Book Movie Tickets Online</title>
+  <meta name="description" content="Book cinema tickets across Karachi, Lahore and Islamabad. Choose your seats and pay online.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Hero -->
+  <section class="hero" id="hero">
+    <div class="hero-bg" id="heroBg"></div>
+    <div class="hero-inner">
+      <div id="heroContent">
+        <div class="hero-eyebrow">Now Showing</div>
+        <h1><span class="sk" style="display:inline-block;width:340px;max-width:80vw;height:44px"></span></h1>
+      </div>
+
+      <form class="hero-search" id="heroSearch" role="search">
+        <input id="q" placeholder="Search for a movie or genre..." aria-label="Search movies">
+        <button class="btn" type="submit">Search</button>
+      </form>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <!-- Genres -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Browse by genre</h2>
+        <a class="link" href="movies.html">All movies &rarr;</a>
+      </div>
+      <div class="chips" id="genres"></div>
+    </section>
+
+    <!-- Now Showing -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Now Showing</h2>
+        <a class="link" href="movies.html?status=now_showing">See all &rarr;</a>
+      </div>
+      <div class="grid" id="nowShowing">${''}</div>
+    </section>
+
+    <!-- Popular -->
+    <section class="section" id="popularSection">
+      <div class="section-head">
+        <h2>Popular this week</h2>
+        <span class="muted" style="font-size:13px">Ranked by audience reviews</span>
+      </div>
+      <div class="grid" id="popular"></div>
+    </section>
+
+    <!-- Coming Soon -->
+    <section class="section" id="soonSection">
+      <div class="section-head">
+        <h2>Coming Soon</h2>
+        <a class="link" href="movies.html?status=coming_soon">See all &rarr;</a>
+      </div>
+      <div class="grid" id="comingSoon"></div>
+    </section>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    $('#heroSearch').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = $('#q').value.trim();
+      location.href = 'movies.html' + (q ? '?search=' + encodeURIComponent(q) : '');
+    });
+
+    function renderHero(movie) {
+      if (!movie) {
+        $('#heroContent').innerHTML = `
+          <div class="hero-eyebrow">Welcome</div>
+          <h1>Book your next film in under a minute</h1>
+          <p>Pick a cinema, choose your seats and pay online.</p>`;
+        return;
+      }
+      $('#heroBg').style.cssText = posterStyle(movie.banner_url || movie.poster_url, movie.title);
+      $('#heroContent').innerHTML = `
+        <div class="hero-eyebrow">&#9679; Now Showing</div>
+        <h1>${esc(movie.title)}</h1>
+        <div class="hero-meta">
+          ${movie.avg_rating ? `<span class="badge gold">${movie.avg_rating}/5 · ${movie.review_count} reviews</span>` : ''}
+          <span class="badge">${esc(movie.certificate || 'U/A')}</span>
+          <span class="badge">${runtime(movie.duration_min || 0)}</span>
+          <span class="badge">${esc(movie.language || '')}</span>
+          <span class="badge">${esc(movie.genre || '')}</span>
+        </div>
+        <p>${esc(movie.description || '')}</p>
+        <div class="hero-actions">
+          <a class="btn lg" href="movie.html?id=${movie.id}">Book Now</a>
+          <a class="btn ghost lg" href="movies.html">Browse all movies</a>
+        </div>`;
+    }
+
+    function fill(id, movies, ranked = false) {
+      const el = $('#' + id);
+      if (!movies.length) {
+        el.innerHTML = `<div class="empty" style="grid-column:1/-1">
+          <div class="icon">&#127916;</div><h3>Nothing here yet</h3>
+          <p class="muted">Check back soon.</p></div>`;
+        return;
+      }
+      el.innerHTML = movies.map((m, i) => movieCard(m, ranked ? i + 1 : null)).join('');
+    }
+
+    (async () => {
+      for (const id of ['nowShowing', 'popular', 'comingSoon']) $('#' + id).innerHTML = skeletonCards(6);
+      await renderNav('index.html');
+      renderFooter();
+
+      try {
+        const [home, { genres }] = await Promise.all([api('/api/home'), api('/api/genres')]);
+
+        renderHero(home.featured);
+        fill('nowShowing', home.now_showing);
+        fill('popular', home.popular, true);
+        fill('comingSoon', home.coming_soon);
+
+        if (!home.popular.length) $('#popularSection').classList.add('hidden');
+        if (!home.coming_soon.length) $('#soonSection').classList.add('hidden');
+
+        $('#genres').innerHTML = genres
+          .map((g) => `<a class="chip" href="movies.html?genre=${encodeURIComponent(g)}">${esc(g)}</a>`).join('');
+
+        // Redraw when an admin adds or edits a film, without a page reload.
+        subscribeLive(['movies', 'shows', 'reviews'], async () => {
+          const fresh = await api('/api/home');
+          renderHero(fresh.featured);
+          fill('nowShowing', fresh.now_showing);
+          fill('popular', fresh.popular, true);
+          fill('comingSoon', fresh.coming_soon);
+          $('#popularSection').classList.toggle('hidden', !fresh.popular.length);
+          $('#soonSection').classList.toggle('hidden', !fresh.coming_soon.length);
+        });
+      } catch (e) {
+        renderHero(null);
+        $('#nowShowing').innerHTML = `<div class="alert err" style="grid-column:1/-1">${esc(e.message)}</div>`;
+        $('#popular').innerHTML = $('#comingSoon').innerHTML = '';
+      }
+    })();
+  </script>
+</body>
+</html>

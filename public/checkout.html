@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkout - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .checkout { display: grid; grid-template-columns: 1.35fr 1fr; gap: 22px; align-items: start; }
+    .pay-methods { display: grid; gap: 10px; }
+    .pay-option {
+      display: flex; align-items: center; gap: 12px; cursor: pointer;
+      padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+      background: var(--bg-2); transition: border-color .15s, background .15s;
+    }
+    .pay-option:hover { border-color: var(--line-2); }
+    .pay-option.sel { border-color: var(--brand); background: rgba(232,182,76,.07); }
+    .pay-option input { width: auto; margin: 0; accent-color: var(--brand); }
+    .pay-option .lbl { font-weight: 600; }
+    .pay-option .note { font-size: 12.5px; color: var(--muted); }
+    .sticky { position: sticky; top: calc(var(--nav-h) + 20px); }
+    @media (max-width: 860px) { .checkout { grid-template-columns: 1fr; } .sticky { position: static; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="steps"></div>
+    <div id="out"><div class="card"><div class="sk sk-row" style="height:220px"></div></div></div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    const bookingId = qs('booking');
+    let booking, price, countdown, step = 4;
+
+    /* ---------------- countdown on the seat hold ---------------- */
+
+    function startTimer(expiresAt) {
+      clearInterval(countdown);
+      const tick = () => {
+        const left = Math.floor((toDate(expiresAt) - Date.now()) / 1000);
+        const el = $('#timer');
+        if (!el) return;
+        if (left <= 0) {
+          clearInterval(countdown);
+          el.textContent = '00:00';
+          toast('Your seat hold expired. Please pick seats again.', 'err');
+          setTimeout(() => location.href = 'movies.html', 1800);
+          return;
+        }
+        el.textContent = `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
+      };
+      tick();
+      countdown = setInterval(tick, 1000);
+    }
+
+    /* ---------------- render ---------------- */
+
+    const priceLines = () => `
+      <div class="price-lines">
+        <div class="sp"><span class="muted">Tickets (${booking.seats.length})</span><span>${money(price.subtotal)}</span></div>
+        ${price.discount > 0 ? `<div class="sp"><span class="muted">Discount${booking.promo_applied ? ' (' + esc(booking.promo_applied) + ')' : ''}</span>
+          <span style="color:var(--ok)">− ${money(price.discount)}</span></div>` : ''}
+        <div class="sp"><span class="muted">Booking fee</span><span>${money(price.booking_fee)}</span></div>
+        <div class="sp"><span class="muted">Service fee</span><span>${money(price.service_fee)}</span></div>
+        <div class="sp total"><span>Total payable</span><span>${money(price.total_amount)}</span></div>
+      </div>`;
+
+    function render() {
+      $('#steps').innerHTML = stepsBar(step);
+
+      $('#out').innerHTML = `
+        <div class="sp" style="margin-bottom:16px">
+          <h1 style="margin:0">${step === 4 ? 'Booking summary' : 'Payment'}</h1>
+          <div class="badge warn">Seats held · <span class="timer" id="timer">--:--</span></div>
+        </div>
+
+        <div class="checkout">
+          <div>
+            <div class="card" style="margin-bottom:16px">
+              <h3>Your booking</h3>
+              <div class="tk-grid">
+                <div><span>Movie</span><b>${esc(booking.title)}</b></div>
+                <div><span>Cinema</span><b>${esc(booking.cinema)}</b></div>
+                <div><span>Screen</span><b>${esc(booking.screen)}</b></div>
+                <div><span>Date</span><b>${fmtDate(booking.start_time)}</b></div>
+                <div><span>Time</span><b>${fmtTime(booking.start_time)}</b></div>
+                <div><span>Seats</span><b>${esc(booking.seats_snapshot)}</b></div>
+              </div>
+              <hr>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Seat</th><th>Type</th><th class="right">Price</th></tr></thead>
+                  <tbody>${booking.seats.map((s) => `
+                    <tr><td><b>${esc(s.label)}</b></td><td class="muted">${esc(s.seat_type)}</td>
+                        <td class="right">${money(s.price)}</td></tr>`).join('')}</tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card ${step === 5 ? '' : 'hidden'}" id="payCard">
+              <h3>Choose how to pay</h3>
+              <div class="pay-methods" id="methods"></div>
+              <p class="hint" style="margin-top:12px">
+                This is a demo gateway - no card details are collected or stored.</p>
+            </div>
+          </div>
+
+          <div class="sticky">
+            <div class="card">
+              <h3>Price details</h3>
+              <div id="lines">${priceLines()}</div>
+
+              <div class="field" style="margin-top:18px">
+                <label>Promo code</label>
+                <div style="display:flex;gap:9px">
+                  <input id="promo" placeholder="WELCOME20" style="text-transform:uppercase"
+                         value="${esc(booking.promo_applied || '')}">
+                  <button class="btn ghost" id="applyPromo" style="flex:0 0 auto">Apply</button>
+                </div>
+                <div class="hint">Try WELCOME20, FLAT200 or STUDENT10.</div>
+              </div>
+
+              <div class="stack" style="margin-top:18px">
+                ${step === 4
+                  ? '<button class="btn lg block" id="toPayment">Continue to payment</button>'
+                  : '<button class="btn lg block" id="payNow">Pay ' + money(price.total_amount) + '</button>'}
+                <button class="btn ghost block" id="cancelHold">
+                  ${step === 4 ? 'Release seats' : 'Back to summary'}</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+
+      startTimer(booking.expires_at);
+      wire();
+    }
+
+    /* ---------------- actions ---------------- */
+
+    function wire() {
+      $('#applyPromo').addEventListener('click', (e) => withBusy(e.target, 'Checking', async () => {
+        const code = $('#promo').value.trim().toUpperCase();
+        try {
+          price = await api('/api/bookings/promo/check', {
+            method: 'POST', body: { booking_id: booking.id, code },
+          });
+          booking.promo_applied = code;
+          $('#lines').innerHTML = priceLines();
+          const btn = $('#payNow');
+          if (btn) btn.textContent = 'Pay ' + money(price.total_amount);
+          toast(code ? `Promo applied — you saved ${money(price.discount)}` : 'Promo removed', 'ok');
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      }));
+
+      $('#toPayment')?.addEventListener('click', () => {
+        step = 5;
+        render();
+        renderMethods();
+      });
+
+      $('#payNow')?.addEventListener('click', (e) => withBusy(e.target, 'Processing payment', async () => {
+        const method = $('input[name=method]:checked')?.value;
+        if (!method) { toast('Choose a payment method', 'err'); return; }
+        try {
+          const r = await api(`/api/bookings/${booking.id}/confirm`, {
+            method: 'POST',
+            body: { method, promo_code: $('#promo').value.trim().toUpperCase() },
+          });
+          clearInterval(countdown);
+          location.href = 'ticket.html?id=' + booking.id + '&new=1';
+        } catch (err) {
+          if (err.status === 402) {
+            $('#payCard').insertAdjacentHTML('afterbegin',
+              `<div class="alert err">${esc(err.message)} Try a different method.</div>`);
+          }
+          toast(err.message, 'err');
+          if (err.status === 410) setTimeout(() => location.href = 'movies.html', 1800);
+        }
+      }));
+
+      $('#cancelHold').addEventListener('click', async () => {
+        if (step === 5) { step = 4; render(); return; }
+        const yes = await confirmDialog({
+          title: 'Release these seats?',
+          message: 'Your held seats will go back on sale and you will return to the showtimes.',
+          confirmLabel: 'Release seats',
+        });
+        if (!yes) return;
+        try { await api(`/api/bookings/${booking.id}/cancel`, { method: 'POST' }); } catch { /* already gone */ }
+        location.href = 'movie.html?id=' + (booking.movie_id || '');
+      });
+    }
+
+    async function renderMethods() {
+      const { methods } = await loadSettings();
+      $('#methods').innerHTML = (methods || []).map((m, i) => `
+        <label class="pay-option ${i === 0 ? 'sel' : ''}">
+          <input type="radio" name="method" value="${esc(m.id)}" ${i === 0 ? 'checked' : ''}>
+          <span>
+            <span class="lbl">${esc(m.label)}</span>
+            <span class="note">${m.instant ? 'Confirmed instantly' : 'Reserve now, pay at the counter'}</span>
+          </span>
+        </label>`).join('');
+
+      $$('.pay-option').forEach((el) => el.addEventListener('click', () => {
+        $$('.pay-option').forEach((o) => o.classList.remove('sel'));
+        el.classList.add('sel');
+      }));
+    }
+
+    (async () => {
+      $('#steps').innerHTML = stepsBar(4);
+      await renderNav('movies.html');
+      renderFooter();
+      await loadSettings();
+
+      if (!bookingId) { location.href = 'movies.html'; return; }
+
+      try {
+        booking = (await api('/api/bookings/' + bookingId)).booking;
+      } catch (e) {
+        $('#out').innerHTML = `<div class="empty"><div class="icon">&#128533;</div>
+          <h3>${esc(e.message)}</h3><a class="btn ghost" href="movies.html">Back to movies</a></div>`;
+        return;
+      }
+
+      if (booking.status === 'CONFIRMED') { location.href = 'ticket.html?id=' + booking.id; return; }
+      if (booking.status !== 'PENDING') {
+        $('#out').innerHTML = `<div class="empty"><div class="icon">&#9203;</div>
+          <h3>This seat hold has expired</h3>
+          <p class="muted">Seats are only held for a few minutes. Please pick them again.</p>
+          <a class="btn" href="movies.html">Choose seats again</a></div>`;
+        return;
+      }
+
+      price = {
+        subtotal: booking.subtotal, discount: booking.discount || 0,
+        booking_fee: booking.booking_fee || 0, service_fee: booking.service_fee || 0,
+        total_amount: booking.total_amount,
+      };
+      render();
+    })();
+  </script>
+</body>
+</html>

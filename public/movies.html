@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>All Movies - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <h1>Movies</h1>
+    <p class="sub" id="count">Browse everything showing and on the way.</p>
+
+    <div class="filters">
+      <input class="grow" id="search" placeholder="Search title or genre..." aria-label="Search">
+      <select id="genre" aria-label="Genre"><option value="">All genres</option></select>
+      <select id="language" aria-label="Language"><option value="">All languages</option></select>
+      <select id="status" aria-label="Status">
+        <option value="">Showing &amp; upcoming</option>
+        <option value="now_showing">Now Showing</option>
+        <option value="coming_soon">Coming Soon</option>
+      </select>
+      <select id="sort" aria-label="Sort by">
+        <option value="">Sort: Default</option>
+        <option value="rating">Top rated</option>
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="title">Title (A-Z)</option>
+        <option value="duration">Longest first</option>
+      </select>
+      <button class="btn ghost" id="clear" type="button">Clear</button>
+    </div>
+
+    <div class="grid" id="list"></div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    let debounce;
+
+    /** Keeps the URL in step with the filters, so results can be linked and reloaded. */
+    function syncUrl() {
+      const p = new URLSearchParams();
+      for (const id of ['search', 'genre', 'language', 'status', 'sort']) {
+        if ($('#' + id).value) p.set(id, $('#' + id).value);
+      }
+      history.replaceState(null, '', p.toString() ? '?' + p : location.pathname);
+    }
+
+    async function load() {
+      syncUrl();
+      $('#list').innerHTML = skeletonCards(10);
+
+      const params = new URLSearchParams({
+        search: $('#search').value.trim(),
+        genre: $('#genre').value,
+        language: $('#language').value,
+        status: $('#status').value,
+        sort: $('#sort').value,
+      });
+
+      try {
+        const { movies } = await api('/api/movies?' + params);
+        $('#count').textContent = movies.length
+          ? `${movies.length} movie${movies.length > 1 ? 's' : ''} found.`
+          : 'Browse everything showing and on the way.';
+
+        $('#list').innerHTML = movies.length
+          ? movies.map((m) => movieCard(m)).join('')
+          : `<div class="empty" style="grid-column:1/-1">
+               <div class="icon">&#128269;</div>
+               <h3>No movies matched</h3>
+               <p class="muted">Try a different search or clear the filters.</p>
+               <button class="btn ghost" onclick="$('#clear').click()">Clear filters</button>
+             </div>`;
+      } catch (e) {
+        $('#list').innerHTML = `<div class="alert err" style="grid-column:1/-1">${esc(e.message)}</div>`;
+      }
+    }
+
+    (async () => {
+      await renderNav('movies.html');
+      renderFooter();
+
+      /* preselect from the URL, so links from the home page land filtered */
+      for (const id of ['search', 'genre', 'language', 'status', 'sort']) {
+        const v = qs(id);
+        if (v) $('#' + id).value = v;
+      }
+
+      try {
+        const [{ genres }, { movies: all }] = await Promise.all([api('/api/genres'), api('/api/movies')]);
+        const languages = [...new Set(all.map((m) => m.language).filter(Boolean))].sort();
+
+        $('#genre').innerHTML = '<option value="">All genres</option>' +
+          genres.map((g) => `<option ${qs('genre') === g ? 'selected' : ''}>${esc(g)}</option>`).join('');
+        $('#language').innerHTML = '<option value="">All languages</option>' +
+          languages.map((l) => `<option ${qs('language') === l ? 'selected' : ''}>${esc(l)}</option>`).join('');
+      } catch { /* filters stay minimal if this fails; the list still loads */ }
+
+      $('#search').addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(load, 260); });
+      ['#genre', '#language', '#status', '#sort'].forEach((s) => $(s).addEventListener('change', load));
+      $('#clear').addEventListener('click', () => {
+        for (const id of ['search', 'genre', 'language', 'status', 'sort']) $('#' + id).value = '';
+        load();
+      });
+
+      load();
+      subscribeLive(['movies', 'reviews'], load);
+    })();
+  </script>
+</body>
+</html>

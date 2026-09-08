@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your Ticket - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap-narrow">
+    <div id="steps" class="no-print"></div>
+    <div id="out"><div class="card"><div class="sk sk-row" style="height:240px"></div></div></div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/qr.js"></script>
+  <script>
+    const STATUS_CLASS = { CONFIRMED: 'ok', PENDING: 'warn', CANCELLED: 'bad', EXPIRED: 'bad' };
+    const PAY_CLASS = { PAID: 'ok', PENDING: 'warn', FAILED: 'bad', REFUNDED: 'bad' };
+
+    (async () => {
+      $('#steps').innerHTML = stepsBar(6);
+      await renderNav('bookings.html');
+      renderFooter();
+      await loadSettings();
+
+      const id = qs('id');
+      const isNew = qs('new') === '1';
+      const out = $('#out');
+
+      let b;
+      try {
+        b = (await api('/api/bookings/' + id)).booking;
+      } catch (e) {
+        out.innerHTML = `<div class="empty"><div class="icon">&#128533;</div>
+          <h3>${esc(e.message)}</h3><a class="btn ghost" href="bookings.html">My bookings</a></div>`;
+        return;
+      }
+
+      const pay = b.payment;
+      const confirmed = b.status === 'CONFIRMED';
+      const awaitingCounter = pay?.status === 'PENDING';
+
+      out.innerHTML = `
+        <div class="center no-print" style="margin-bottom:22px">
+          <div style="font-size:38px;line-height:1">${confirmed ? '&#10003;' : '&#9432;'}</div>
+          <h1 style="margin:8px 0">
+            ${confirmed ? (isNew ? 'Booking confirmed' : 'Your ticket') : 'Booking ' + b.status.toLowerCase()}</h1>
+          <p class="sub" style="margin:0">
+            ${confirmed
+              ? (awaitingCounter
+                  ? 'Seats reserved. Pay at the counter before the show starts.'
+                  : 'Show this reference at the counter to collect your tickets.')
+              : 'This booking is no longer active.'}</p>
+        </div>
+
+        ${awaitingCounter ? '<div class="alert warn no-print">Payment is still pending — settle it at the counter.</div>' : ''}
+        ${pay?.status === 'REFUNDED' ? '<div class="alert warn no-print">This booking was cancelled and refunded.</div>' : ''}
+
+        <div class="ticket">
+          <div class="ticket-head sp">
+            <div>
+              <div class="dim" style="font-size:11px;letter-spacing:.8px">BOOKING REFERENCE</div>
+              <div class="ref-code">${esc(b.booking_ref)}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <span class="badge ${STATUS_CLASS[b.status] || ''}">${b.status}</span>
+              ${pay ? `<span class="badge ${PAY_CLASS[pay.status] || ''}">${pay.status}</span>` : ''}
+            </div>
+          </div>
+
+          <div class="ticket-body">
+            <h3 style="font-size:21px;margin-bottom:4px">${esc(b.title)}</h3>
+            <p class="muted" style="margin:0 0 20px">
+              ${esc(b.cinema)} · ${esc(b.screen)} · ${esc(b.city)}<br>
+              <span class="dim" style="font-size:13px">${esc(b.address || '')}</span>
+            </p>
+
+            <div class="tk-grid">
+              <div><span>Date</span><b>${fmtDate(b.start_time)}</b></div>
+              <div><span>Time</span><b>${fmtTime(b.start_time)}</b></div>
+              <div><span>Runtime</span><b>${runtime(b.duration_min || 0)}</b></div>
+              <div><span>Seats</span><b>${esc(b.seats_snapshot)}</b></div>
+              <div><span>Tickets</span><b>${b.seats.length}</b></div>
+              <div><span>Total</span><b>${money(b.total_amount)}</b></div>
+            </div>
+
+            <div class="qr-wrap">
+              <canvas id="qr" aria-label="Ticket QR code"></canvas>
+              <div>
+                <b style="display:block;margin-bottom:5px">Scan at the entrance</b>
+                <div class="muted" style="font-size:13px">
+                  The code carries your booking reference. Staff can also type
+                  <b style="color:var(--brand)">${esc(b.booking_ref)}</b> in manually.
+                </div>
+              </div>
+            </div>
+
+            <hr>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Seat</th><th>Type</th><th class="right">Price</th></tr></thead>
+                <tbody>${b.seats.map((s) => `
+                  <tr><td><b>${esc(s.label)}</b></td><td class="muted">${esc(s.seat_type)}</td>
+                      <td class="right">${money(s.price)}</td></tr>`).join('')}</tbody>
+              </table>
+            </div>
+
+            <div class="price-lines" style="margin-top:16px">
+              <div class="sp"><span class="muted">Tickets</span><span>${money(b.subtotal)}</span></div>
+              ${b.discount > 0 ? `<div class="sp"><span class="muted">Discount${b.promo_code ? ' (' + esc(b.promo_code) + ')' : ''}</span>
+                <span style="color:var(--ok)">− ${money(b.discount)}</span></div>` : ''}
+              ${b.booking_fee ? `<div class="sp"><span class="muted">Booking fee</span><span>${money(b.booking_fee)}</span></div>` : ''}
+              ${b.service_fee ? `<div class="sp"><span class="muted">Service fee</span><span>${money(b.service_fee)}</span></div>` : ''}
+              <div class="sp total"><span>Total</span><span>${money(b.total_amount)}</span></div>
+            </div>
+
+            ${pay ? `<p class="dim" style="margin-top:14px;font-size:12.5px">
+              ${esc(pay.method)} · ${esc(pay.provider || 'mock')} · Txn ${esc(pay.txn_ref)} · ${esc(pay.status)}</p>` : ''}
+
+            <p class="dim" style="margin-top:10px;font-size:12.5px">
+              Please arrive 15 minutes before showtime. Outside food is not permitted.</p>
+          </div>
+        </div>
+
+        <div class="row no-print" style="margin-top:20px">
+          <button class="btn ghost" onclick="window.print()">Print ticket</button>
+          <a class="btn ghost" href="bookings.html" style="text-align:center">My bookings</a>
+          <a class="btn" href="movies.html" style="text-align:center">Book another</a>
+        </div>`;
+
+      /* The QR carries the reference, so a scanner reads something meaningful. */
+      try {
+        QR.render($('#qr'), b.booking_ref, { size: 132 });
+      } catch (e) {
+        $('.qr-wrap').innerHTML = `<div class="muted">Reference: <b class="ref-code">${esc(b.booking_ref)}</b></div>`;
+      }
+    })();
+  </script>
+</body>
+</html>

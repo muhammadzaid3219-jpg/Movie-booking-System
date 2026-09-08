@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap-slim">
+    <div class="tabs">
+      <div class="tab active" data-tab="login">Login</div>
+      <div class="tab" data-tab="register">Create account</div>
+    </div>
+
+    <form class="card" id="loginForm" novalidate>
+      <div id="loginError"></div>
+      <div class="field">
+        <label for="lEmail">Email</label>
+        <input type="email" id="lEmail" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="lPass">Password</label>
+        <input type="password" id="lPass" autocomplete="current-password" required>
+      </div>
+      <button class="btn block" type="submit" id="loginBtn">Login</button>
+      <p class="center" style="margin:14px 0 0;font-size:13.5px">
+        <a href="#" id="forgotLink">Forgot your password?</a>
+      </p>
+      <hr>
+      <p class="dim center" style="font-size:12.5px;margin:0">
+        Demo accounts<br>
+        <b>admin@cinema.com</b> / admin123 &nbsp;·&nbsp; <b>ali@example.com</b> / user123
+      </p>
+    </form>
+
+    <form class="card hidden" id="regForm" novalidate>
+      <div id="regError"></div>
+      <div class="field">
+        <label for="rName">Full name</label>
+        <input id="rName" autocomplete="name" required minlength="3">
+      </div>
+      <div class="field">
+        <label for="rEmail">Email</label>
+        <input type="email" id="rEmail" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="rPhone">Phone <span class="dim">(optional)</span></label>
+        <input id="rPhone" autocomplete="tel" placeholder="03001234567">
+      </div>
+      <div class="field">
+        <label for="rPass">Password</label>
+        <input type="password" id="rPass" autocomplete="new-password" required minlength="6">
+        <div class="hint">At least 6 characters.</div>
+      </div>
+      <button class="btn block" type="submit" id="regBtn">Create account</button>
+    </form>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    const next = qs('next') || 'index.html';
+    const showError = (id, msg) => { $('#' + id).innerHTML = msg ? `<div class="alert err">${esc(msg)}</div>` : ''; };
+
+    $$('.tab').forEach((t) => t.addEventListener('click', () => {
+      $$('.tab').forEach((x) => x.classList.toggle('active', x === t));
+      $('#loginForm').classList.toggle('hidden', t.dataset.tab !== 'login');
+      $('#regForm').classList.toggle('hidden', t.dataset.tab !== 'register');
+    }));
+
+    $('#loginForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      showError('loginError', '');
+      withBusy($('#loginBtn'), 'Signing in', async () => {
+        try {
+          await api('/api/auth/login', {
+            method: 'POST', body: { email: $('#lEmail').value, password: $('#lPass').value },
+          });
+          location.href = next;
+        } catch (err) { showError('loginError', err.message); }
+      });
+    });
+
+    $('#regForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      showError('regError', '');
+
+      if ($('#rName').value.trim().length < 3) return showError('regError', 'Name must be at least 3 characters');
+      if ($('#rPass').value.length < 6) return showError('regError', 'Password must be at least 6 characters');
+
+      withBusy($('#regBtn'), 'Creating account', async () => {
+        try {
+          await api('/api/auth/register', {
+            method: 'POST',
+            body: {
+              name: $('#rName').value, email: $('#rEmail').value,
+              phone: $('#rPhone').value, password: $('#rPass').value,
+            },
+          });
+          location.href = next;
+        } catch (err) { showError('regError', err.message); }
+      });
+    });
+
+    /* ---------------- forgot password ---------------- */
+
+    $('#forgotLink').addEventListener('click', (e) => {
+      e.preventDefault();
+
+      const back = document.createElement('div');
+      back.className = 'modal-backdrop';
+      back.innerHTML = `
+        <div class="modal slim">
+          <div class="modal-head"><h3>Reset your password</h3>
+            <button class="x-close" data-close>&times;</button></div>
+          <div class="modal-body">
+            <div id="fpOut"></div>
+            <div class="field">
+              <label for="fpEmail">Your account email</label>
+              <input type="email" id="fpEmail" value="${esc($('#lEmail').value)}" autocomplete="email">
+            </div>
+            <p class="hint" style="margin:0">We will send a link that lets you set a new password.</p>
+          </div>
+          <div class="modal-foot">
+            <button class="btn ghost" data-close>Cancel</button>
+            <button class="btn" id="fpSend">Send reset link</button>
+          </div>
+        </div>`;
+      document.body.appendChild(back);
+
+      const close = () => back.remove();
+      back.addEventListener('click', (ev) => { if (ev.target === back) close(); });
+      $$('[data-close]', back).forEach((b) => b.addEventListener('click', close));
+      $('#fpEmail', back).focus();
+
+      $('#fpSend', back).addEventListener('click', (ev) => withBusy(ev.target, 'Sending', async () => {
+        try {
+          const r = await api('/api/auth/forgot-password', {
+            method: 'POST', body: { email: $('#fpEmail', back).value },
+          });
+          // In development the server hands back the link, since no mail service is wired up.
+          $('#fpOut', back).innerHTML = r.reset_link
+            ? `<div class="alert ok">${esc(r.message)}
+                 <div style="margin-top:9px">No mail service is configured on this demo, so here is your link:</div>
+                 <a href="${esc(r.reset_link)}" style="word-break:break-all">${esc(r.reset_link)}</a></div>`
+            : `<div class="alert ok">${esc(r.message)}</div>`;
+        } catch (err) {
+          $('#fpOut', back).innerHTML = `<div class="alert err">${esc(err.message)}</div>`;
+        }
+      }));
+    });
+
+    (async () => {
+      const user = await renderNav();
+      renderFooter();
+      if (user) location.href = next;
+    })();
+  </script>
+</body>
+</html>

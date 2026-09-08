@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Bookings - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .bk { display: flex; gap: 16px; flex-wrap: wrap; }
+    .bk .poster { width: 78px; border-radius: 9px; flex: 0 0 auto; }
+    .bk .poster::after { content: none; }
+    .bk .mid { flex: 1; min-width: 210px; }
+    .bk .end { text-align: right; min-width: 140px; }
+    @media (max-width: 520px) { .bk .end { text-align: left; width: 100%; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>My Bookings</h1>
+    <p class="sub">Your upcoming shows, past visits and account details.</p>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="upcoming">Upcoming</div>
+      <div class="tab" data-tab="past">Past</div>
+      <div class="tab" data-tab="profile">Profile</div>
+    </div>
+
+    <div id="panel"></div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    let data = { upcoming: [], past: [] };
+    let tab = location.hash === '#profile' ? 'profile' : 'upcoming';
+
+    const STATUS_CLASS = { CONFIRMED: 'ok', PENDING: 'warn', CANCELLED: 'bad' };
+    const PAY_CLASS = { PAID: 'ok', PENDING: 'warn', FAILED: 'bad', REFUNDED: 'bad' };
+
+    function card(b, showCancel) {
+      return `
+        <div class="card bk" style="margin-bottom:12px">
+          <div class="poster" style="${posterStyle(b.poster_url, b.title)}"></div>
+          <div class="mid">
+            <div class="sp" style="margin-bottom:6px">
+              <b style="font-size:16px">${esc(b.title)}</b>
+              <div style="display:flex;gap:7px;flex-wrap:wrap">
+                <span class="badge ${STATUS_CLASS[b.status] || ''}">${b.status}</span>
+                ${b.payment_status ? `<span class="badge ${PAY_CLASS[b.payment_status] || ''}">${b.payment_status}</span>` : ''}
+              </div>
+            </div>
+            <div class="muted" style="font-size:13.5px;line-height:1.75">
+              ${fmtDateTime(b.start_time)}<br>
+              ${esc(b.cinema)} · ${esc(b.screen)} · ${esc(b.city)}<br>
+              Seats: <b style="color:var(--text)">${esc(b.seats_snapshot)}</b>
+              &nbsp;|&nbsp; Ref: <b style="color:var(--brand)">${esc(b.booking_ref)}</b>
+            </div>
+          </div>
+          <div class="end">
+            <div style="font-size:20px;font-weight:750">${money(b.total_amount)}</div>
+            <div class="dim" style="font-size:12px">${b.seat_count} ticket${b.seat_count > 1 ? 's' : ''}</div>
+            <div style="margin-top:11px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+              <a class="btn ghost sm" href="ticket.html?id=${b.id}">View ticket</a>
+              ${showCancel && b.cancellable
+                ? `<button class="btn danger sm" data-cancel="${b.id}">Cancel</button>` : ''}
+            </div>
+            ${showCancel && !b.cancellable && b.status !== 'CANCELLED'
+              ? `<div class="dim" style="font-size:11.5px;margin-top:6px">Too close to showtime to cancel</div>` : ''}
+          </div>
+        </div>`;
+    }
+
+    function renderProfile() {
+      $('#panel').innerHTML = `
+        <div class="card" style="max-width:540px">
+          <h3>Profile</h3>
+          <div class="field"><label>Name</label><input id="pName" value="${esc(CURRENT_USER.name)}"></div>
+          <div class="field"><label>Email</label><input value="${esc(CURRENT_USER.email)}" disabled></div>
+          <div class="field"><label>Phone</label><input id="pPhone" value="${esc(CURRENT_USER.phone || '')}"></div>
+          <button class="btn sm" id="saveProfile">Save changes</button>
+
+          <hr>
+          <h3>Change password</h3>
+          <div class="field"><label>Current password</label><input type="password" id="cpOld" autocomplete="current-password"></div>
+          <div class="field"><label>New password</label><input type="password" id="cpNew" autocomplete="new-password"></div>
+          <button class="btn ghost sm" id="savePass">Update password</button>
+        </div>`;
+
+      $('#saveProfile').addEventListener('click', (e) => withBusy(e.target, 'Saving', async () => {
+        try {
+          const r = await api('/api/auth/me', {
+            method: 'PATCH', body: { name: $('#pName').value, phone: $('#pPhone').value },
+          });
+          CURRENT_USER = r.user;
+          toast('Profile updated', 'ok');
+        } catch (err) { toast(err.message, 'err'); }
+      }));
+
+      $('#savePass').addEventListener('click', (e) => withBusy(e.target, 'Updating', async () => {
+        try {
+          await api('/api/auth/change-password', {
+            method: 'POST',
+            body: { current_password: $('#cpOld').value, new_password: $('#cpNew').value },
+          });
+          $('#cpOld').value = $('#cpNew').value = '';
+          toast('Password updated', 'ok');
+        } catch (err) { toast(err.message, 'err'); }
+      }));
+    }
+
+    function render() {
+      $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
+      if (tab === 'profile') return renderProfile();
+
+      const list = data[tab];
+      $('#panel').innerHTML = list.length
+        ? list.map((b) => card(b, tab === 'upcoming')).join('')
+        : `<div class="empty">
+             <div class="icon">${tab === 'upcoming' ? '&#127903;' : '&#128337;'}</div>
+             <h3>${tab === 'upcoming' ? 'No upcoming bookings' : 'Nothing in your history yet'}</h3>
+             <p class="muted">${tab === 'upcoming'
+               ? 'Book a film and it will appear here.'
+               : 'Past shows will be listed here after they finish.'}</p>
+             <a class="btn" href="movies.html">Browse movies</a>
+           </div>`;
+
+      $$('[data-cancel]').forEach((btn) => btn.addEventListener('click', async () => {
+        const yes = await confirmDialog({
+          title: 'Cancel this booking?',
+          message: 'Your seats will go back on sale and the amount will be refunded.',
+          confirmLabel: 'Cancel booking',
+        });
+        if (!yes) return;
+        try {
+          const r = await api(`/api/bookings/${btn.dataset.cancel}/cancel`, { method: 'POST' });
+          toast(r.refunded ? `Cancelled — ${money(r.refunded)} refunded` : 'Booking cancelled', 'ok');
+          await load();
+        } catch (e) { toast(e.message, 'err'); }
+      }));
+    }
+
+    async function load() {
+      $('#panel').innerHTML = skeletonRows(3);
+      try {
+        data = await api('/api/bookings/mine');
+        render();
+      } catch (e) {
+        $('#panel').innerHTML = `<div class="alert err">${esc(e.message)}</div>`;
+      }
+    }
+
+    (async () => {
+      const user = await renderNav('bookings.html');
+      renderFooter();
+      await loadSettings();
+
+      if (!user) { location.href = 'login.html?next=/bookings.html'; return; }
+
+      $$('.tab').forEach((t) => t.addEventListener('click', () => {
+        tab = t.dataset.tab;
+        history.replaceState(null, '', tab === 'profile' ? '#profile' : location.pathname);
+        render();
+      }));
+
+      if (tab === 'profile') { render(); await load(); render(); }
+      else await load();
+
+      subscribeLive(['bookings', 'shows'], () => { if (tab !== 'profile') load(); });
+    })();
+  </script>
+</body>
+</html>

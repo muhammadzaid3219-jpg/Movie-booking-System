@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cinemas - Cineplex</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <h1 id="heading">Cinemas</h1>
+    <p class="sub" id="sub">Pick a cinema to see everything playing there.</p>
+
+    <div class="filters" id="filters">
+      <select id="city" aria-label="City"><option value="">All cities</option></select>
+    </div>
+
+    <div id="out"></div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    const cinemaId = qs('id');
+    let selectedDate = isoDate(new Date());
+
+    /* ---------------- list of cinemas ---------------- */
+
+    async function loadList() {
+      $('#out').innerHTML = skeletonRows(4);
+      const { cinemas } = await api('/api/cinemas?city=' + encodeURIComponent($('#city').value));
+
+      if (!cinemas.length) {
+        $('#out').innerHTML = `<div class="empty"><div class="icon">&#127917;</div>
+          <h3>No cinemas here yet</h3><p class="muted">Try another city.</p></div>`;
+        return;
+      }
+
+      $('#sub').textContent = `${cinemas.length} cinema${cinemas.length > 1 ? 's' : ''} available.`;
+      $('#out').innerHTML = cinemas.map((c) => `
+        <div class="card" style="margin-bottom:14px">
+          <div class="sp">
+            <div>
+              <h3 style="margin:0 0 4px">${esc(c.name)}</h3>
+              <div class="muted" style="font-size:13.5px">${esc(c.address || '')}</div>
+              <div class="movie-meta" style="margin-top:9px">
+                <span class="badge info">${esc(c.city)}</span>
+                <span class="badge">${c.screen_count} screen${c.screen_count > 1 ? 's' : ''}</span>
+                <span class="badge">${c.total_seats} seats</span>
+                <span class="badge ${c.upcoming_shows ? 'ok' : 'bad'}">
+                  ${c.upcoming_shows ? c.upcoming_shows + ' upcoming shows' : 'No shows scheduled'}</span>
+              </div>
+            </div>
+            <a class="btn ${c.upcoming_shows ? '' : 'ghost'}" href="cinemas.html?id=${c.id}">View showtimes</a>
+          </div>
+          ${c.now_showing.length ? `
+            <hr>
+            <div class="muted" style="font-size:12.5px;margin-bottom:8px">Playing here</div>
+            <div class="chips" style="margin:0">
+              ${c.now_showing.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}
+            </div>` : ''}
+        </div>`).join('');
+    }
+
+    /* ---------------- one cinema's schedule ---------------- */
+
+    function renderDates() {
+      const today = new Date();
+      return `<div class="date-strip">${Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(today); d.setDate(today.getDate() + i);
+        const iso = isoDate(d);
+        return `<div class="date-chip ${iso === selectedDate ? 'active' : ''}" data-date="${iso}"
+                     role="button" tabindex="0">
+                  ${DAYS[d.getDay()]}<b>${d.getDate()}</b>${MONTHS[d.getMonth()]}
+                </div>`;
+      }).join('')}</div>`;
+    }
+
+    async function loadCinema() {
+      $('#filters').classList.add('hidden');
+      $('#out').innerHTML = skeletonRows(3);
+
+      let data;
+      try {
+        data = await api(`/api/cinemas/${cinemaId}/shows?date=${selectedDate}`);
+      } catch (e) {
+        $('#out').innerHTML = `<div class="alert err">${esc(e.message)}</div>`;
+        return;
+      }
+
+      const c = data.cinema;
+      $('#heading').textContent = c.name;
+      $('#sub').innerHTML = `${esc(c.address || '')} · <span class="badge info">${esc(c.city)}</span>
+        &nbsp;<a href="cinemas.html">All cinemas</a>`;
+      document.title = `${c.name} - Cineplex`;
+
+      const body = data.movies.length
+        ? data.movies.map((m) => `
+            <div class="card cinema-block">
+              <div style="display:flex;gap:15px;flex-wrap:wrap;align-items:flex-start">
+                <div class="poster" style="${posterStyle(m.poster_url, m.title)};width:64px;border-radius:8px;flex:0 0 auto"></div>
+                <div style="flex:1;min-width:190px">
+                  <h3 style="margin:0 0 5px">
+                    <a href="movie.html?id=${m.movie_id}">${esc(m.title)}</a></h3>
+                  <div class="movie-meta">
+                    <span class="badge">${esc(m.certificate || 'U/A')}</span>
+                    <span>${esc(m.language || '')}</span><span>·</span>
+                    <span>${runtime(m.duration_min || 0)}</span><span>·</span>
+                    <span>${esc(m.genre || '')}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="time-list">
+                ${m.shows.map((s) => {
+                  const full = s.seats_left <= 0;
+                  return `<div class="time-btn ${full ? 'full' : ''}"
+                               ${full ? '' : `onclick="location.href='seats.html?show=${s.id}'"`}
+                               role="button" tabindex="${full ? -1 : 0}">
+                            ${fmtTime(s.start_time)}
+                            <small>${esc(s.screen)} · ${full ? 'Housefull' : s.seats_left + ' left'}</small>
+                          </div>`;
+                }).join('')}
+              </div>
+            </div>`).join('')
+        : `<div class="empty"><div class="icon">&#128197;</div>
+             <h3>No shows on this date</h3>
+             <p class="muted">Try another day from the strip above.</p></div>`;
+
+      $('#out').innerHTML = renderDates() + body;
+
+      $$('.date-chip').forEach((chip) => {
+        const go = () => { selectedDate = chip.dataset.date; loadCinema(); };
+        chip.addEventListener('click', go);
+        chip.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      });
+    }
+
+    (async () => {
+      await renderNav('cinemas.html');
+      renderFooter();
+
+      if (cinemaId) return loadCinema();
+
+      try {
+        const { cities } = await api('/api/cities');
+        $('#city').innerHTML = '<option value="">All cities</option>' +
+          cities.map((c) => `<option ${qs('city') === c ? 'selected' : ''}>${esc(c)}</option>`).join('');
+      } catch { /* the list still loads without the city filter */ }
+
+      $('#city').addEventListener('change', loadList);
+      loadList();
+      subscribeLive(['cinemas', 'screens', 'shows'], loadList);
+    })();
+  </script>
+</body>
+</html>
