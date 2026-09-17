@@ -178,8 +178,25 @@ const LOGO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
   stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/>
   <path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5"/></svg>`;
 
+/*
+ * The whole site sits behind a login: a visitor who is not signed in is sent to
+ * the login page first and brought back here afterwards. Only the pages needed
+ * to get in stay open. The page is hidden until the check finishes, so nothing
+ * flashes on screen before the redirect.
+ */
+const OPEN_PAGES = ['login.html', 'reset-password.html'];
+const PAGE_NAME = location.pathname.split('/').pop() || 'index.html';
+const LOGIN_GATED = !OPEN_PAGES.includes(PAGE_NAME);
+if (LOGIN_GATED) document.documentElement.style.visibility = 'hidden';
+
 async function renderNav(active = '') {
   try { CURRENT_USER = (await api('/api/auth/me')).user; } catch { CURRENT_USER = null; }
+
+  if (LOGIN_GATED && !CURRENT_USER) {
+    location.replace('login.html?next=' + encodeURIComponent(location.pathname + location.search));
+    return new Promise(() => {});   // stop the page's own loading while the redirect happens
+  }
+  document.documentElement.style.visibility = '';
 
   const links = [
     ['index.html', 'Home'],

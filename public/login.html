@@ -54,7 +54,9 @@
 
   <script src="js/app.js"></script>
   <script>
-    const next = qs('next') || 'index.html';
+    // Only a path on this site, so a crafted link cannot bounce people to another website after login.
+    const nextParam = qs('next') || '';
+    const next = /^\/(?!\/)/.test(nextParam) && !nextParam.includes('\\') ? nextParam : 'index.html';
     const showError = (id, msg) => { $('#' + id).innerHTML = msg ? `<div class="alert err">${esc(msg)}</div>` : ''; };
 
     $$('.tab').forEach((t) => t.addEventListener('click', () => {
