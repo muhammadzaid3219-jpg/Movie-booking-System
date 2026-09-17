@@ -95,16 +95,11 @@ function openForm({ title, fields, values = {}, saveLabel = 'Save', onSave }) {
     file.addEventListener('change', async () => {
       const picked = file.files[0];
       if (!picked) return;
-      if (picked.size > 5 * 1024 * 1024) { toast('Image is larger than 5 MB', 'err'); file.value = ''; return; }
+      if (picked.size > 25 * 1024 * 1024) { toast('Image is larger than 25 MB', 'err'); file.value = ''; return; }
 
       prev.textContent = 'Uploading...';
       try {
-        const dataUrl = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = () => reject(new Error('Could not read that file'));
-          reader.readAsDataURL(picked);
-        });
+        const dataUrl = await readImageForUpload(picked);
         const r = await api('/api/admin/uploads', { method: 'POST', body: { data: dataUrl } });
         url.value = r.url;
         refresh();

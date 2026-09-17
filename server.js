@@ -127,6 +127,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
+/* Uploaded images kept in the Firebase database, for hosts whose disk is wiped on restart. */
+app.get('/uploads/:name', require('./src/routes/uploads').serveFromDatabase);
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found' }));
 
 // eslint-disable-next-line no-unused-vars

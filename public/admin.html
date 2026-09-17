@@ -828,7 +828,7 @@ Archiving hides it from the site and stops new bookings, `
         <div class="card" style="margin-bottom:20px">
           <h3>Upload Images</h3>
           <p class="muted" style="font-size:13px;margin-top:-4px">
-            PNG, JPG, WEBP or GIF, up to 5 MB each. Uploaded images can be picked as movie posters,
+            PNG, JPG, WEBP or GIF. Large photos are shrunk automatically before upload. Uploaded images can be picked as movie posters,
             or you can copy an image's URL and paste it anywhere.</p>
           <input type="file" id="mediaFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
         </div>
@@ -852,12 +852,7 @@ Archiving hides it from the site and stops new bookings, `
         let done = 0;
         for (const file of picked) {
           try {
-            const dataUrl = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result);
-              reader.onerror = () => reject(new Error('Could not read ' + file.name));
-              reader.readAsDataURL(file);
-            });
+            const dataUrl = await readImageForUpload(file);
             await api('/api/admin/uploads', { method: 'POST', body: { data: dataUrl } });
             done++;
           } catch (err) { toast(`${file.name}: ${err.message}`, 'err'); }

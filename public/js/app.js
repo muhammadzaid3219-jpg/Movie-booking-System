@@ -284,6 +284,46 @@ function renderFooter() {
   document.body.appendChild(footer);
 }
 
+/**
+ * Reads a picked image as a data URL ready for upload, shrinking large photos
+ * first. Posters never need more than about 1400px, and a phone photo can be
+ * several MB, far more than the database should hold per image.
+ */
+const UPLOAD_TARGET_BYTES = 600 * 1024;
+
+async function readImageForUpload(file) {
+  const asDataUrl = (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read ' + (file.name || 'that file')));
+    reader.readAsDataURL(blob);
+  });
+
+  if (file.size <= UPLOAD_TARGET_BYTES) return asDataUrl(file);   // small enough; keeps GIF animation too
+
+  const img = await new Promise((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('That file is not an image this browser can open'));
+    el.src = URL.createObjectURL(file);
+  });
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  for (const [maxSide, quality] of [[1400, 0.85], [1200, 0.78], [1000, 0.72], [800, 0.65], [600, 0.6]]) {
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    ctx.fillStyle = '#0b0d12';                     // transparent areas of a PNG
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL('image/jpeg', quality);
+    if (out.length * 0.75 <= UPLOAD_TARGET_BYTES) { URL.revokeObjectURL(img.src); return out; }
+  }
+  URL.revokeObjectURL(img.src);
+  throw new Error('This image is too large even after shrinking. Please use a smaller picture.');
+}
+
 /** Sends the visitor to login and returns them here afterwards. */
 function requireLogin() {
   if (CURRENT_USER) return true;

@@ -2,13 +2,18 @@
 /**
  * Image uploads without a multipart library.
  * The browser reads the file as a base64 data URL and posts it as JSON; this
- * route decodes it and stores a real file.
+ * route decodes it and stores it.
  *
- * Where it is stored depends on where the app runs:
- *   locally      public/uploads/, served by Express
- *   deployed     Firebase Storage - a Cloud Function's own folder is read-only
- *                and wiped whenever the instance is replaced
- * Set UPLOAD_TARGET=storage to use Firebase Storage locally too.
+ * Where it is stored (UPLOAD_TARGET overrides the choice):
+ *   database   the same Firebase database as everything else. The default on
+ *              the Firebase drivers, because hosts such as Render wipe their own
+ *              disk on every restart and deploy, and Firebase Storage needs the
+ *              paid Blaze plan on new projects.
+ *   storage    Firebase Storage. The default on Google Cloud.
+ *   local      public/uploads/, served by Express. The default on SQLite.
+ *
+ * Every target hands out the same kind of URL, /uploads/<name> (or a Storage
+ * download URL), so the pages never need to know where an image lives.
  */
 const express = require('express');
 const crypto = require('node:crypto');
@@ -16,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const A = require('../auth');
 const App = require('../firebaseapp');
+const config = require('../config');
 
 const router = express.Router();
 router.use(A.requireAdmin);
@@ -23,18 +29,108 @@ router.use(A.requireAdmin);
 const UPLOAD_DIR = path.join(__dirname, '..', '..', 'public', 'uploads');
 const PREFIX = 'uploads/';
 
-const useStorage = () => process.env.UPLOAD_TARGET === 'storage' || App.onGoogleCloud();
+function target() {
+  const chosen = String(process.env.UPLOAD_TARGET || '').toLowerCase();
+  if (['database', 'storage', 'local'].includes(chosen)) return chosen;
+  if (App.onGoogleCloud()) return 'storage';
+  return config.driver === 'sqlite' ? 'local' : 'database';
+}
 
-const MAX_BYTES = 5 * 1024 * 1024;   // 5 MB per image
+const MAX_BYTES = 5 * 1024 * 1024;   // 5 MB per image on disk or Storage
+/*
+ * A Firestore document holds at most 1 MB, and base64 adds a third, so database
+ * images stay under 700 KB. The admin pages shrink photos before upload, so a
+ * normal poster lands far below this.
+ */
+const DB_MAX_BYTES = 700 * 1024;
 const EXT = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
   'image/gif': '.gif',
 };
+const MIME = Object.fromEntries(Object.entries(EXT).map(([m, e]) => [e.slice(1), m]));
 
 /** Only files this route itself could have written. */
 const SAFE_NAME = /^[a-f0-9]{16}\.(png|jpg|webp|gif)$/;
+
+/* ---------------- database ---------------- */
+
+/* Realtime Database keys may not contain a dot. */
+const dbKey = (name) => name.replace('.', '_');
+const nameFromKey = (key) => key.replace('_', '.');
+
+const images = {
+  async save(name, doc) {
+    if (config.driver === 'rtdb') return require('../rtdb').db().ref('images/' + dbKey(name)).set(doc);
+    return require('../firestore').db().collection('images').doc(dbKey(name)).set(doc);
+  },
+  async get(name) {
+    if (config.driver === 'rtdb') return (await require('../rtdb').db().ref('images/' + dbKey(name)).get()).val();
+    const snap = await require('../firestore').db().collection('images').doc(dbKey(name)).get();
+    return snap.exists ? snap.data() : null;
+  },
+  async remove(name) {
+    if (config.driver === 'rtdb') return require('../rtdb').db().ref('images/' + dbKey(name)).remove();
+    return require('../firestore').db().collection('images').doc(dbKey(name)).delete();
+  },
+  /** Everything but the picture itself, for the media library. */
+  async list() {
+    if (config.driver === 'rtdb') {
+      // A shallow read is not available in the Admin SDK, so metadata lives beside the data.
+      const val = (await require('../rtdb').db().ref('imageIndex').get()).val() || {};
+      return Object.entries(val).map(([key, meta]) => ({ name: nameFromKey(key), ...meta }));
+    }
+    const snap = await require('../firestore').db().collection('images').select('size', 'created_at').get();
+    return snap.docs.map((d) => ({ name: nameFromKey(d.id), ...d.data() }));
+  },
+  async index(name, meta) {
+    if (config.driver === 'rtdb') await require('../rtdb').db().ref('imageIndex/' + dbKey(name)).set(meta);
+  },
+};
+
+/* Images never change once written (every upload gets a new name), so they cache well. */
+const cache = new Map();
+const CACHE_LIMIT = 40 * 1024 * 1024;
+let cacheBytes = 0;
+
+function remember(name, entry) {
+  cache.set(name, entry);
+  cacheBytes += entry.body.length;
+  for (const [key, old] of cache) {
+    if (cacheBytes <= CACHE_LIMIT) break;
+    cache.delete(key);
+    cacheBytes -= old.body.length;
+  }
+}
+
+function forget(name) {
+  const old = cache.get(name);
+  if (old) { cacheBytes -= old.body.length; cache.delete(name); }
+}
+
+/**
+ * GET /uploads/:name for images kept in the database. Mounted after the static
+ * files, so an image that exists on disk is still served from there.
+ */
+async function serveFromDatabase(req, res, next) {
+  const name = String(req.params.name);
+  if (config.driver === 'sqlite' || !SAFE_NAME.test(name)) return next();
+  try {
+    let entry = cache.get(name);
+    if (!entry) {
+      const doc = await images.get(name);
+      if (!doc?.data) return res.status(404).end();
+      entry = { mime: doc.mime || MIME[name.split('.').pop()], body: Buffer.from(doc.data, 'base64') };
+      remember(name, entry);
+    }
+    res.setHeader('Content-Type', entry.mime);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.end(entry.body);
+  } catch (e) {
+    next(e);
+  }
+}
 
 /* ---------------- Firebase Storage ---------------- */
 
@@ -56,7 +152,17 @@ const isMissingBucket = (e) => e?.code === 404 || /does not exist|bucket.*not fo
 /* ---------------- routes ---------------- */
 
 router.get('/', async (_req, res) => {
-  if (useStorage()) {
+  const where = target();
+
+  if (where === 'database') {
+    const rows = (await images.list())
+      .filter((f) => SAFE_NAME.test(f.name))
+      .map((f) => ({ name: f.name, url: '/uploads/' + f.name, size: Number(f.size || 0), created_at: f.created_at || '' }))
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return res.json({ files: rows });
+  }
+
+  if (where === 'storage') {
     let files;
     try {
       [files] = await bucket().getFiles({ prefix: PREFIX });
@@ -104,8 +210,19 @@ router.post('/', async (req, res) => {
   }
 
   const name = crypto.randomBytes(8).toString('hex') + ext;
+  const where = target();
 
-  if (useStorage()) {
+  if (where === 'database') {
+    if (buffer.length > DB_MAX_BYTES) {
+      return res.status(413).json({ error: 'Image is larger than 700 KB. Please use a smaller picture.' });
+    }
+    const created_at = new Date().toISOString();
+    await images.save(name, { mime: mime.toLowerCase(), size: buffer.length, created_at, data: buffer.toString('base64') });
+    await images.index(name, { size: buffer.length, created_at });
+    return res.status(201).json({ url: '/uploads/' + name, name, size: buffer.length });
+  }
+
+  if (where === 'storage') {
     const token = crypto.randomUUID();
     try {
       await bucket().file(PREFIX + name).save(buffer, {
@@ -131,8 +248,17 @@ router.post('/', async (req, res) => {
 router.delete('/:name', async (req, res) => {
   const name = String(req.params.name);
   if (!SAFE_NAME.test(name)) return res.status(400).json({ error: 'Invalid file name' });
+  const where = target();
 
-  if (useStorage()) {
+  if (where === 'database') {
+    if (!(await images.get(name))) return res.status(404).json({ error: 'File not found' });
+    await images.remove(name);
+    if (config.driver === 'rtdb') await require('../rtdb').db().ref('imageIndex/' + dbKey(name)).remove();
+    forget(name);
+    return res.json({ ok: true });
+  }
+
+  if (where === 'storage') {
     try {
       await bucket().file(PREFIX + name).delete();
     } catch (e) {
@@ -150,3 +276,4 @@ router.delete('/:name', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.serveFromDatabase = serveFromDatabase;
