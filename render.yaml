@@ -13,6 +13,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: TZ
+        value: Asia/Karachi
       - key: NODE_ENV
         value: production
       - key: DB_DRIVER

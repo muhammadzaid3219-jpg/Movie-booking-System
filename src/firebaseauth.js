@@ -24,7 +24,8 @@ const auth = () => require('firebase-admin/auth').getAuth(App.get());
 async function apiKey() {
   if (webApiKey) return webApiKey;
   // WEB_API_KEY on Cloud Functions, where every FIREBASE_* variable name is reserved.
-  const fromEnv = process.env.WEB_API_KEY || process.env.FIREBASE_WEB_API_KEY;
+  // Trimmed, because a key pasted into a hosting dashboard often carries a stray space or newline.
+  const fromEnv = (process.env.WEB_API_KEY || process.env.FIREBASE_WEB_API_KEY || '').trim();
   if (fromEnv) return (webApiKey = fromEnv);
 
   const head = { Authorization: 'Bearer ' + (await App.accessToken()) };
@@ -121,7 +122,10 @@ async function verifyPassword(email, password) {
 
   if (!res.ok) {
     const code = String(data.error?.message || '').split(' ')[0];
-    return { error: FRIENDLY[code] || 'Email or password is incorrect' };
+    if (FRIENDLY[code]) return { error: FRIENDLY[code] };
+    // Anything else is a setup problem (usually a wrong WEB_API_KEY), not a wrong password.
+    console.error('Firebase sign-in failed:', data.error?.message || res.status);
+    return { error: 'Login is not set up correctly on the server (check WEB_API_KEY). Details are in the server logs.' };
   }
   return { uid: data.localId };
 }

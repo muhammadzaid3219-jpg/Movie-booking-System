@@ -91,7 +91,7 @@
         </div>
         <p>${esc(movie.description || '')}</p>
         <div class="hero-actions">
-          <a class="btn lg" href="movie.html?id=${movie.id}">Book Now</a>
+          <a class="btn lg" href="movie.html?id=${movie.id}">${movie.status === 'coming_soon' ? 'View details' : 'Book Now'}</a>
           <a class="btn ghost lg" href="movies.html">Browse all movies</a>
         </div>`;
     }

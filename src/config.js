@@ -13,6 +13,13 @@ if (fs.existsSync(ENV_FILE) && typeof process.loadEnvFile === 'function') {
   try { process.loadEnvFile(ENV_FILE); } catch (e) { console.warn('Could not read .env:', e.message); }
 }
 
+/*
+ * Show times and seat holds are stored as local "YYYY-MM-DD HH:MM" strings, which
+ * the browser reads as its own local time. Hosting servers run on UTC, so without
+ * this a hold made in Pakistan looked 5 hours expired the moment it was created.
+ */
+if (!process.env.TZ) process.env.TZ = process.env.APP_TIMEZONE || 'Asia/Karachi';
+
 const num = (v, fallback) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? fallback : Number(v));
 const bool = (v, fallback) => (v === undefined ? fallback : ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase()));
 
