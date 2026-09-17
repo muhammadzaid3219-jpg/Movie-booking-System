@@ -1,0 +1,29 @@
+# Render Blueprint - deploys the whole app (pages + API server) on Render's free tier.
+# Data stays in Firebase Realtime Database and Firebase Authentication.
+# Secrets marked `sync: false` are typed into the Render dashboard, never committed.
+services:
+  - type: web
+    name: movie-booking-system
+    runtime: node
+    plan: free
+    region: singapore          # closest Render region to Pakistan
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/cities
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DB_DRIVER
+        value: rtdb
+      - key: AUTH_PROVIDER
+        value: firebase
+      - key: RESET_REVEAL_LINK
+        value: "false"
+      - key: APP_SECRET
+        generateValue: true    # Render creates a random secret
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false            # paste the one-line JSON from render-secrets.local.txt
+      - key: WEB_API_KEY
+        sync: false            # paste from render-secrets.local.txt

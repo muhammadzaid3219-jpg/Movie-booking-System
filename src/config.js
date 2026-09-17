@@ -24,15 +24,24 @@ const config = {
   isProd,
   port: num(process.env.PORT, 3000),
 
-  /** 'firestore' (default) or 'sqlite'. */
-  driver: (process.env.DB_DRIVER || 'firestore').toLowerCase(),
+  /**
+   * 'sqlite' (default), 'rtdb' or 'firestore'.
+   * SQLite is the default because it needs no secrets: a fresh clone without
+   * .env or firebase-key.json still runs instead of failing on every request.
+   */
+  driver: (process.env.DB_DRIVER || 'sqlite').toLowerCase(),
 
   /** Signs session cookies. Must be set in production. */
   secret: process.env.APP_SECRET || 'dev-only-secret-change-me',
 
   session: {
     days: num(process.env.SESSION_DAYS, 7),
-    cookieName: process.env.SESSION_COOKIE || 'mbs_token',
+    /*
+     * Must be "__session": Firebase Hosting strips every other cookie before a
+     * request reaches the Cloud Function, so any other name means nobody can
+     * stay logged in on the deployed site.
+     */
+    cookieName: process.env.SESSION_COOKIE || '__session',
     /** Cookies go secure-only once you are behind HTTPS. */
     secure: bool(process.env.COOKIE_SECURE, isProd),
   },

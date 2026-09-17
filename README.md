@@ -129,6 +129,58 @@ The Realtime Database URL is derived from the project id
 
 ---
 
+## Hosting on Render (free, no card)
+
+`render.yaml` deploys the whole app - pages and API - as one Render web service. Data stays in
+Firebase Realtime Database and Firebase Authentication.
+
+1. Commit and push to GitHub (secrets are git-ignored and never pushed).
+2. On https://render.com sign in with GitHub -> **New** -> **Blueprint** -> pick this repository.
+3. Render asks for two values - paste them from `render-secrets.local.txt`:
+   `FIREBASE_SERVICE_ACCOUNT` (the service-account JSON on one line) and `WEB_API_KEY`.
+4. **Apply**. The first build takes a few minutes; the site appears at `https://<name>.onrender.com`.
+
+Free-tier notes: the service sleeps after 15 idle minutes, so the first request after that takes
+about a minute. Its disk is wiped on every restart, so uploaded poster files do not survive -
+paste an image URL instead, or move uploads to Firebase Storage (needs the Blaze plan).
+
+---
+
+## Deploying to Firebase
+
+Firebase Hosting serves the pages in `public/`; every `/api/**` request is forwarded to a
+Cloud Function (`index.js`) that runs the same Express app as `npm start`.
+
+**Requires the Blaze (pay-as-you-go) plan** — Cloud Functions do not run on Spark. The free
+allowance on Blaze covers a small site; `maxInstances: 3` in `index.js` caps runaway cost.
+
+```bash
+npm install -g firebase-tools   # once
+firebase login                  # once
+npm run deploy                  # = firebase deploy --only functions,hosting
+```
+
+Run these from this folder (the one containing `firebase.json`).
+
+What is different once deployed:
+
+- **Credentials** come from Google automatically; `firebase-key.json` is never uploaded.
+- **Settings** come from `.env` plus `.env.movie-system-762ad` (production secret, Web API key).
+  Both are git-ignored. Cloud Functions reserve `PORT` and every `FIREBASE_*` name, hence
+  `WEB_API_KEY` rather than `FIREBASE_WEB_API_KEY`.
+- **Session cookie** is named `__session` — the only cookie Firebase Hosting forwards.
+- **Poster uploads** go to Firebase Storage. Enable it once: console → Storage → Get started.
+  Until then the Media tab says so, and image URLs still work.
+- **Live updates** poll every 20 seconds instead of streaming, because Hosting holds a
+  function response until it ends.
+- **Forgot password** does not reveal the reset link (no mail service is connected, and
+  revealing it publicly would let anyone reset anyone's password).
+
+Test the deployed setup locally first: `npx firebase emulators:start --only functions,hosting`,
+then open http://127.0.0.1:5000.
+
+---
+
 ## What is in it
 
 ### Customer site

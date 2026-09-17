@@ -22,13 +22,30 @@ if (!['firestore', 'sqlite', 'rtdb'].includes(DRIVER)) {
   console.error(`Unknown DB_DRIVER "${DRIVER}". Use "sqlite", "firestore" or "rtdb".`);
   process.exit(1);
 }
-const ROUTE_DIR = DRIVER === 'sqlite' ? 'sqlite' : 'cloud';
+/*
+ * A Firebase driver without the service-account key cannot answer a single
+ * request, and used to surface only as "Something went wrong on the server".
+ * This happens every time the project is cloned, because the key is git-ignored
+ * on purpose. Explain it plainly and fall back to SQLite so the site still runs.
+ */
+if (DRIVER !== 'sqlite' && !require('./src/firebaseapp').isConfigured()) {
+  console.warn(
+    `\n  DB_DRIVER=${DRIVER} needs firebase-key.json, which is not in this folder.\n` +
+    '  (It is git-ignored on purpose, so a fresh clone never has it.)\n' +
+    '  Fix: copy your service-account key here as firebase-key.json and restart.\n' +
+    '  Running on SQLite until then - data you add now goes to the local file.\n'
+  );
+  config.driver = 'sqlite';
+  config.auth.provider = 'local';
+}
+const DRIVER_ACTIVE = config.driver;
+const ROUTE_DIR = DRIVER_ACTIVE === 'sqlite' ? 'sqlite' : 'cloud';
 
 /*
  * The SQLite routes always hash passwords locally, so asking for Firebase Auth
  * there would silently do nothing. Say so rather than pretending.
  */
-if (DRIVER === 'sqlite' && config.auth.provider === 'firebase') {
+if (DRIVER_ACTIVE === 'sqlite' && config.auth.provider === 'firebase') {
   console.warn(
     '\n  AUTH_PROVIDER=firebase is ignored on the SQLite driver.\n' +
     '  Firebase Authentication needs a Firebase database - set DB_DRIVER to rtdb or firestore.\n' +
@@ -78,7 +95,7 @@ app.get('/api/events', (req, res) => live.stream(req, res));
  * SQLite cannot push change notifications, so the server announces its own
  * successful writes. The cloud drivers get this from database listeners instead.
  */
-if (DRIVER === 'sqlite') {
+if (DRIVER_ACTIVE === 'sqlite') {
   app.use((req, res, next) => {
     if (req.method === 'GET') return next();
     res.on('finish', () => {
@@ -120,7 +137,7 @@ app.use((err, _req, res, _next) => {
 });
 
 /* Free abandoned seat holds even when nobody is browsing. */
-const releaseExpiredHolds = DRIVER === 'sqlite'
+const releaseExpiredHolds = DRIVER_ACTIVE === 'sqlite'
   ? require('./src/db').releaseExpiredHolds
   : require('./src/store').releaseExpiredHolds;
 
@@ -131,11 +148,19 @@ setInterval(async () => {
 
 live.start();
 
-app.listen(PORT, () => {
-  const accounts = config.auth.provider === 'firebase' ? 'Firebase Auth' : 'local passwords';
-  console.log(`\n  Movie Booking System`);
-  console.log(`  Data     -> ${DRIVER.toUpperCase()}          (DB_DRIVER)`);
-  console.log(`  Accounts -> ${accounts}   (AUTH_PROVIDER)`);
-  console.log(`  Site        -> http://localhost:${PORT}`);
-  console.log(`  Admin panel -> http://localhost:${PORT}/admin.html\n`);
-});
+/*
+ * `node server.js` listens on a port. When required instead - by the Cloud
+ * Function in index.js - the app is exported and Google's runtime serves it.
+ */
+if (require.main === module) {
+  app.listen(PORT, () => {
+    const accounts = config.auth.provider === 'firebase' ? 'Firebase Auth' : 'local passwords';
+    console.log(`\n  Movie Booking System`);
+    console.log(`  Data     -> ${DRIVER_ACTIVE.toUpperCase()}          (DB_DRIVER)`);
+    console.log(`  Accounts -> ${accounts}   (AUTH_PROVIDER)`);
+    console.log(`  Site        -> http://localhost:${PORT}`);
+    console.log(`  Admin panel -> http://localhost:${PORT}/admin.html\n`);
+  });
+}
+
+module.exports = app;

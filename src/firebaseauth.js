@@ -23,7 +23,9 @@ const auth = () => require('firebase-admin/auth').getAuth(App.get());
 /** The Web API key, from the environment or looked up once and cached. */
 async function apiKey() {
   if (webApiKey) return webApiKey;
-  if (process.env.FIREBASE_WEB_API_KEY) return (webApiKey = process.env.FIREBASE_WEB_API_KEY);
+  // WEB_API_KEY on Cloud Functions, where every FIREBASE_* variable name is reserved.
+  const fromEnv = process.env.WEB_API_KEY || process.env.FIREBASE_WEB_API_KEY;
+  if (fromEnv) return (webApiKey = fromEnv);
 
   const head = { Authorization: 'Bearer ' + (await App.accessToken()) };
   const list = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${App.projectId()}/webApps`,

@@ -819,10 +819,12 @@ Archiving hides it from the site and stops new bookings, `
        ========================================================= */
 
     async function media() {
-      const files = await api('/api/admin/uploads').then((r) => r.files);
+      const media = await api('/api/admin/uploads');
+      const files = media.files;
       const kb = (n) => (n / 1024).toFixed(0) + ' KB';
 
       $('#panel').innerHTML = `
+        ${media.notice ? `<div class="alert warn">${esc(media.notice)}</div>` : ''}
         <div class="card" style="margin-bottom:20px">
           <h3>Upload Images</h3>
           <p class="muted" style="font-size:13px;margin-top:-4px">
@@ -920,7 +922,8 @@ Archiving hides it from the site and stops new bookings, `
       };
 
       subscribeLive(Object.values(WATCHES).flat(), (collection) => {
-        if (!(WATCHES[tab] || []).includes(collection)) return;
+        if (collection !== '*' && !(WATCHES[tab] || []).includes(collection)) return;
+        if (collection === '*' && !(WATCHES[tab] || []).length) return;   // media tab: nothing to poll
         render();
       });
     })();

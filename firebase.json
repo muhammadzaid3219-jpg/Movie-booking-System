@@ -1,16 +1,38 @@
 {
   "hosting": {
     "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
+    "cleanUrls": false,
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "uploads/**"],
     "rewrites": [
+      { "source": "/api/**", "function": { "functionId": "api", "region": "us-central1" } }
+    ],
+    "headers": [
       {
-        "source": "**",
-        "destination": "/index.html"
+        "source": "**/*.@(html|js|css)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
       }
     ]
-  }
+  },
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "default",
+      "runtime": "nodejs22",
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".github",
+        ".agents",
+        ".claude",
+        ".firebase",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "data",
+        "public",
+        "firebase-key.json",
+        "*firebase*key*.json",
+        "*-adminsdk-*.json"
+      ]
+    }
+  ]
 }

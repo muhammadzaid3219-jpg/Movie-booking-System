@@ -2,7 +2,7 @@
   "name": "movie-booking-system",
   "version": "1.0.0",
   "description": "Movie Ticket Booking System - Node.js + Express, with SQLite / Firestore / Realtime Database drivers",
-  "main": "server.js",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
@@ -15,7 +15,9 @@
     "migrate:rtdb": "node src/migrate.js --target=rtdb",
     "migrate:rtdb:reset": "node src/migrate.js --target=rtdb --reset",
     "clean": "node src/clean.js",
-    "auth:sync": "node src/authsync.js"
+    "auth:sync": "node src/authsync.js",
+    "gcp-build": "",
+    "deploy": "firebase deploy --only functions,hosting"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -23,9 +25,7 @@
   "dependencies": {
     "express": "^4.19.2",
     "firebase": "^12.18.0",
-    "firebase-admin": "^14.3.0"
-  },
-  "devDependencies": {
-    "vite": "^8.2.2"
+    "firebase-admin": "^14.3.0",
+    "firebase-functions": "^7.4.0"
   }
 }

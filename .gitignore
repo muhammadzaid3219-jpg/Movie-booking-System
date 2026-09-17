@@ -8,7 +8,8 @@ public/uploads/*
 
 # Secrets - NEVER commit these
 .env
-
+.env.*
+!.env.example
 # Firebase service-account keys - NEVER commit these.
 # Deliberately broad: a typo'd filename is exactly how keys get leaked.
 firebase-key.json
@@ -16,3 +17,10 @@ firebase-key.json
 *fierbase*.json
 *serviceAccount*.json
 *-adminsdk-*.json
+
+# Firebase CLI deploy cache
+.firebase/
+firebase-debug*.log
+
+# Secrets prepared for pasting into hosting dashboards
+*.local.txt

@@ -12,14 +12,39 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const KEY_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS
-  || path.join(__dirname, '..', 'firebase-key.json');
+/** The key downloaded from the Firebase console, kept next to package.json. */
+const LOCAL_KEY = path.join(__dirname, '..', 'firebase-key.json');
+
+/**
+ * GOOGLE_APPLICATION_CREDENTIALS is only treated as a key when it points at a
+ * service account. Tools such as the Firebase emulator point it at a user login
+ * file instead, which has no project_id and must go through applicationDefault().
+ */
+function isServiceAccountFile(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')).type === 'service_account'; } catch { return false; }
+}
+const envKey = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+const KEY_PATH = fs.existsSync(LOCAL_KEY) ? LOCAL_KEY
+  : envKey && isServiceAccountFile(envKey) ? envKey
+  : LOCAL_KEY;
 
 let cached = null;
 let app = null;
 
-/** True when a service-account key is available. */
-const isConfigured = () => Boolean(process.env.FIREBASE_SERVICE_ACCOUNT) || fs.existsSync(KEY_PATH);
+/**
+ * Running inside Google Cloud (a deployed Cloud Function or Cloud Run service).
+ * There the runtime supplies credentials itself, so no key file is shipped.
+ */
+const onGoogleCloud = () =>
+  Boolean(process.env.K_SERVICE || process.env.FUNCTION_TARGET) && !process.env.FUNCTIONS_EMULATOR;
+
+const hasKeyFile = () => Boolean(process.env.FIREBASE_SERVICE_ACCOUNT) || isServiceAccountFile(KEY_PATH);
+
+/** Credentials Google's libraries find on their own: a login file, or the cloud runtime. */
+const hasAmbientCredentials = () => onGoogleCloud() || Boolean(envKey && fs.existsSync(envKey));
+
+/** True when Firebase can be reached: a key file locally, or built-in credentials otherwise. */
+const isConfigured = () => hasKeyFile() || hasAmbientCredentials();
 
 function credential() {
   if (cached) return cached;
@@ -57,21 +82,28 @@ function credential() {
   return (cached = raw);
 }
 
-const projectId = () => credential().project_id;
+const projectId = () => (hasKeyFile()
+  ? credential().project_id
+  : process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || JSON.parse(process.env.FIREBASE_CONFIG || '{}').projectId);
+
+/** Settings Google injects into a deployed function (projectId, databaseURL, storageBucket). */
+const runtimeConfig = () => { try { return JSON.parse(process.env.FIREBASE_CONFIG || '{}'); } catch { return {}; } };
 
 const databaseURL = () =>
-  process.env.FIREBASE_DATABASE_URL || `https://${projectId()}-default-rtdb.firebaseio.com`;
+  process.env.DATABASE_URL || process.env.FIREBASE_DATABASE_URL || runtimeConfig().databaseURL
+  || `https://${projectId()}-default-rtdb.firebaseio.com`;
 
 /** The shared app, created once with every option any module might need. */
 function get() {
   if (app) return app;
 
-  const { getApps, initializeApp, cert } = require('firebase-admin/app');
+  const { getApps, initializeApp, cert, applicationDefault } = require('firebase-admin/app');
   const existing = getApps();
   app = existing.length
     ? existing[0]
     : initializeApp({
-        credential: cert(credential()),
+        // Locally: the downloaded service-account key. Deployed: Google's own credentials.
+        credential: hasKeyFile() ? cert(credential()) : applicationDefault(),
         projectId: projectId(),
         databaseURL: databaseURL(),
       });
@@ -81,4 +113,4 @@ function get() {
 /** An OAuth token for the Firebase Management API. */
 const accessToken = async () => (await get().options.credential.getAccessToken()).access_token;
 
-module.exports = { get, credential, projectId, databaseURL, isConfigured, accessToken, KEY_PATH };
+module.exports = { get, credential, projectId, databaseURL, runtimeConfig, isConfigured, onGoogleCloud, accessToken, KEY_PATH };

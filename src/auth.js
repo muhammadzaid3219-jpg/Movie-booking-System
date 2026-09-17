@@ -1,6 +1,5 @@
 'use strict';
 const crypto = require('node:crypto');
-const { db } = require('./db');
 const config = require('./config');
 
 const SECRET = config.secret;
@@ -82,7 +81,9 @@ const DRIVER = config.driver;
 /** Looks the user up in whichever database this deployment is using. */
 async function loadUser(id) {
   if (DRIVER === 'sqlite') {
-    return db.prepare('SELECT id, name, email, phone, role, blocked FROM users WHERE id = ?').get(id);
+    // Required lazily: loading db.js creates data/cinema.db, which would fail on
+    // read-only hosting filesystems where SQLite is not even in use.
+    return require('./db').db.prepare('SELECT id, name, email, phone, role, blocked FROM users WHERE id = ?').get(id);
   }
   const user = await require('./store').findUserById(id);
   if (!user) return null;

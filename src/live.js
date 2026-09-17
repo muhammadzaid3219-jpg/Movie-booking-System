@@ -79,6 +79,13 @@ function start() {
  * Sends a comment every 25s so proxies do not time the connection out.
  */
 function stream(req, res) {
+  /*
+   * Behind Firebase Hosting a response is held until it finishes (and cut at 60
+   * seconds), so a long-lived stream never delivers anything - it would only keep
+   * an instance busy. 204 tells the browser not to reconnect; it polls instead.
+   */
+  if (require('./firebaseapp').onGoogleCloud()) return res.status(204).end();
+
   res.set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',

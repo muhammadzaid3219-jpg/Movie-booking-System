@@ -104,7 +104,10 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
  */
 function posterStyle(poster, title = '') {
   if (poster && /^(https?:\/\/|\/uploads\/)/.test(poster)) {
-    return `background-image:url('${encodeURI(poster)}')`;
+    // Not encodeURI: Storage URLs are already encoded, and encoding them again
+    // turns %2F into %252F. Only characters that could break out of the style attribute matter.
+    const safe = poster.replace(/[()"']/g, (c) => '%' + c.charCodeAt(0).toString(16));
+    return `background-image:url('${safe}')`;
   }
   const [a = '', b = ''] = String(poster || '').split(',');
   const seed = [...title].reduce((s, c) => s + c.charCodeAt(0), 0);
@@ -314,10 +317,22 @@ function subscribeLive(collections, onChange) {
     onChange(payload.collection);
   });
 
-  src.onerror = () => { /* EventSource retries by itself */ };
+  /*
+   * When the stream is refused outright (the deployed site answers 204), fall
+   * back to checking every 20 seconds. '*' means "anything may have changed".
+   * Paused while the tab is hidden so idle tabs cost nothing.
+   */
+  src.onerror = () => {
+    if (src.readyState !== EventSource.CLOSED || src._polling) return;
+    src._polling = setInterval(() => {
+      if (document.hidden || document.querySelector('.modal-backdrop')) return;
+      onChange('*');
+    }, 20_000);
+  };
 
-  window.addEventListener('beforeunload', () => src.close());
-  return () => src.close();
+  const stop = () => { src.close(); clearInterval(src._polling); };
+  window.addEventListener('beforeunload', stop);
+  return stop;
 }
 
 /** Loads shared money/format settings once per page. */

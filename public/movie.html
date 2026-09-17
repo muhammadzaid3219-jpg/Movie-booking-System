@@ -283,6 +283,7 @@
       loadReviews();
 
       subscribeLive(['shows', 'bookings', 'reviews', 'movies'], (c) => {
+        if (c === '*') loadReviews();
         if (c === 'reviews') return loadReviews();
         loadShows();
       });
